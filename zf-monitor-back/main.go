@@ -22,20 +22,20 @@ type ProcessInfo struct {
 }
 
 type Report struct {
-	Hostname string       `json:"hostname"`
-	Timestamp int64        `json:"timestamp"`
-	CPU       float64      `json:"cpu"`
-	Memory    float64      `json:"memory"`
-	Disk      float64      `json:"disk"`
-	NetUp     float64      `json:"netUp"`
-	NetDown   float64      `json:"netDown"`
+	Hostname  string        `json:"hostname"`
+	Timestamp int64         `json:"timestamp"`
+	CPU       float64       `json:"cpu"`
+	Memory    float64       `json:"memory"`
+	Disk      float64       `json:"disk"`
+	NetUp     float64       `json:"netUp"`
+	NetDown   float64       `json:"netDown"`
 	Processes []ProcessInfo `json:"processes"`
 }
 
 type AlertRecord struct {
-	RuleName string `json:"ruleName"`
-	Level    string `json:"level"`
-	Message  string `json:"message"`
+	RuleName  string `json:"ruleName"`
+	Level     string `json:"level"`
+	Message   string `json:"message"`
 	Timestamp string `json:"timestamp"`
 }
 
@@ -45,25 +45,25 @@ type MetricPoint struct {
 }
 
 type summaryResponse struct {
-	Hostname string       `json:"hostname"`
-	Status   string       `json:"status"`
-	LastSeen string       `json:"lastSeen"`
-	CPU      float64      `json:"cpu"`
-	Memory   float64      `json:"memory"`
-	Disk     float64      `json:"disk"`
-	NetUp    float64      `json:"netUp"`
-	NetDown  float64      `json:"netDown"`
+	Hostname  string        `json:"hostname"`
+	Status    string        `json:"status"`
+	LastSeen  string        `json:"lastSeen"`
+	CPU       float64       `json:"cpu"`
+	Memory    float64       `json:"memory"`
+	Disk      float64       `json:"disk"`
+	NetUp     float64       `json:"netUp"`
+	NetDown   float64       `json:"netDown"`
 	Processes []ProcessInfo `json:"processes"`
-	Alerts   []AlertRecord `json:"alerts"`
+	Alerts    []AlertRecord `json:"alerts"`
 }
 
 var (
-	stateMu sync.RWMutex
-	stateHost string
-	stateLastSeen time.Time
+	stateMu        sync.RWMutex
+	stateHost      string
+	stateLastSeen  time.Time
 	stateProcesses []ProcessInfo
-	stateAlertMap = map[string]bool{}
-	stateDB *sql.DB
+	stateAlertMap  = map[string]bool{}
+	stateDB        *sql.DB
 )
 
 func main() {
@@ -171,15 +171,15 @@ func handleSummary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := summaryResponse{
-		Hostname: hostname,
-		Status:   status,
-		CPU:      current.CPU,
-		Memory:   current.Memory,
-		Disk:     current.Disk,
-		NetUp:    current.NetUp,
-		NetDown:  current.NetDown,
+		Hostname:  hostname,
+		Status:    status,
+		CPU:       current.CPU,
+		Memory:    current.Memory,
+		Disk:      current.Disk,
+		NetUp:     current.NetUp,
+		NetDown:   current.NetDown,
 		Processes: processes,
-		Alerts:   currentAlerts(current),
+		Alerts:    currentAlerts(current),
 	}
 	if !lastSeen.IsZero() {
 		response.LastSeen = lastSeen.Format(time.RFC3339)

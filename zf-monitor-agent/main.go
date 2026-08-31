@@ -18,27 +18,27 @@ import (
 )
 
 type ProcessInfo struct {
-	PID       int32   `json:"pid"`
-	Name      string  `json:"name"`
-	CPU       float64 `json:"cpu"`
-	MemoryMB  float64 `json:"memoryMB"`
+	PID      int32   `json:"pid"`
+	Name     string  `json:"name"`
+	CPU      float64 `json:"cpu"`
+	MemoryMB float64 `json:"memoryMB"`
 }
 
 type Report struct {
-	Hostname string       `json:"hostname"`
-	Timestamp int64       `json:"timestamp"`
-	CPU       float64      `json:"cpu"`
-	Memory    float64      `json:"memory"`
-	Disk      float64      `json:"disk"`
-	NetUp     float64      `json:"netUp"`
-	NetDown   float64      `json:"netDown"`
+	Hostname  string        `json:"hostname"`
+	Timestamp int64         `json:"timestamp"`
+	CPU       float64       `json:"cpu"`
+	Memory    float64       `json:"memory"`
+	Disk      float64       `json:"disk"`
+	NetUp     float64       `json:"netUp"`
+	NetDown   float64       `json:"netDown"`
 	Processes []ProcessInfo `json:"processes"`
 }
 
 var (
-	netLastSent  uint64
-	netLastRecv  uint64
-	netLastTime  time.Time
+	netLastSent uint64
+	netLastRecv uint64
+	netLastTime time.Time
 )
 
 func main() {
@@ -67,7 +67,7 @@ func main() {
 
 func collectReport(hostname string) (Report, error) {
 	report := Report{
-		Hostname: hostname,
+		Hostname:  hostname,
 		Timestamp: time.Now().Unix(),
 	}
 
