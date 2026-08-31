@@ -106,7 +106,14 @@ func initDB(db *sql.DB) error {
 	return nil
 }
 
+func setNoCache(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+}
+
 func handleReport(w http.ResponseWriter, r *http.Request) {
+	setNoCache(w)
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -138,6 +145,7 @@ func handleReport(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSummary(w http.ResponseWriter, r *http.Request) {
+	setNoCache(w)
 	stateMu.RLock()
 	hostname := stateHost
 	lastSeen := stateLastSeen
@@ -182,6 +190,7 @@ func handleSummary(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleHistory(w http.ResponseWriter, r *http.Request) {
+	setNoCache(w)
 	window := 1800
 	if value := r.URL.Query().Get("window"); value != "" {
 		if v, err := strconv.Atoi(value); err == nil && v > 0 {
@@ -204,6 +213,7 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleProcesses(w http.ResponseWriter, r *http.Request) {
+	setNoCache(w)
 	stateMu.RLock()
 	processes := append([]ProcessInfo(nil), stateProcesses...)
 	stateMu.RUnlock()

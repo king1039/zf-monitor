@@ -9,7 +9,7 @@ function formatNumber(value, suffix = '') {
 }
 
 function updateSummary() {
-  fetch('/api/summary')
+  fetch('/api/summary', { cache: 'no-store' })
     .then((res) => res.json())
     .then((data) => {
       state.summary = data;
@@ -92,7 +92,7 @@ function renderChart(canvasId, points, color) {
 }
 
 function updateHistory() {
-  fetch('/api/history?window=1800')
+  fetch('/api/history?window=1800', { cache: 'no-store' })
     .then((res) => res.json())
     .then((data) => {
       state.history = data;
