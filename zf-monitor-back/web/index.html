@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ZF Monitor</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header class="topbar">
+        <div>
+          <h1>ZF Monitor</h1>
+        </div>
+        <div class="status-box">
+          <span id="hostname">-</span>
+          <span id="status-badge" class="status-badge offline">Offline</span>
+        </div>
+      </header>
+
+      <div class="meta-row">
+        <div class="meta-item">
+          <label>Last Seen</label>
+          <span id="last-seen">-</span>
+        </div>
+      </div>
+
+      <section class="cards">
+        <div class="card">
+          <div class="label">CPU</div>
+          <div id="cpu-value" class="value">0%</div>
+        </div>
+        <div class="card">
+          <div class="label">Memory</div>
+          <div id="memory-value" class="value">0%</div>
+        </div>
+        <div class="card">
+          <div class="label">Disk</div>
+          <div id="disk-value" class="value">0%</div>
+        </div>
+        <div class="card">
+          <div class="label">Network</div>
+          <div id="network-value" class="value">0 KB/s</div>
+        </div>
+      </section>
+
+      <section class="charts">
+        <div class="chart-card">
+          <h3>CPU History</h3>
+          <canvas id="cpu-chart" width="520" height="220"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>Memory History</h3>
+          <canvas id="memory-chart" width="520" height="220"></canvas>
+        </div>
+      </section>
+
+      <section class="bottom-grid">
+        <div class="panel">
+          <h3>Top Processes</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>PID</th>
+                <th>CPU %</th>
+                <th>Memory MB</th>
+              </tr>
+            </thead>
+            <tbody id="process-table-body"></tbody>
+          </table>
+        </div>
+
+        <div class="panel">
+          <h3>Alerts</h3>
+          <ul id="alert-list" class="alert-list"></ul>
+        </div>
+      </section>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

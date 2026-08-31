@@ -1,0 +1,19 @@
+# Go build artifacts
+*.exe
+*.out
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Local runtime data
+zf-monitor-back/data/
+!zf-monitor-back/data/.gitkeep
+
+# Temporary files
+*.tmp

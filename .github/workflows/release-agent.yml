@@ -1,0 +1,30 @@
+name: Release Agent
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build Windows agent
+        run: |
+          cd zf-monitor-agent
+          mkdir -p dist
+          GOOS=windows GOARCH=amd64 go build -o dist/zf-monitor-agent.exe
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            zf-monitor-agent/dist/zf-monitor-agent.exe
