@@ -3,6 +3,7 @@ const state = {
   selectedHostId: '',
   historyWindow: '3600',
   requestToken: 0,
+  activePage: 'hosts',
 };
 
 const els = {
@@ -36,6 +37,33 @@ function setPageError(message) {
 function clearPageError() {
   els.pageError.textContent = '';
   els.pageError.classList.add('hidden');
+}
+
+function switchPage(pageName) {
+  state.activePage = pageName;
+
+  const navItems = document.querySelectorAll('.nav-item');
+  navItems.forEach((button) => {
+    button.classList.toggle('active', button.dataset.page === pageName);
+  });
+
+  const pageViews = document.querySelectorAll('.page-view');
+  pageViews.forEach((section) => {
+    section.classList.add('hidden');
+  });
+
+  if (pageName === 'hosts') {
+    document.getElementById('hosts-page').classList.remove('hidden');
+    if (state.selectedHostId) {
+      refreshSelectedHostData();
+    }
+    return;
+  }
+
+  const targetPage = document.getElementById(`${pageName}-page`);
+  if (targetPage) {
+    targetPage.classList.remove('hidden');
+  }
 }
 
 function normalizeHostId(hostId) {
@@ -432,11 +460,26 @@ els.historyWindow.addEventListener('change', (event) => {
   }
 });
 
+document.querySelectorAll('.nav-item').forEach((button) => {
+  button.addEventListener('click', () => {
+    const pageName = button.dataset.page;
+    switchPage(pageName);
+    if (pageName === 'hosts') {
+      loadHosts();
+    }
+  });
+});
+
 window.addEventListener('load', () => {
+  switchPage('hosts');
   loadHosts();
-  setInterval(loadHosts, 12000);
   setInterval(() => {
-    if (state.selectedHostId) {
+    if (state.activePage === 'hosts') {
+      loadHosts();
+    }
+  }, 12000);
+  setInterval(() => {
+    if (state.activePage === 'hosts' && state.selectedHostId) {
       refreshSelectedHostData();
     }
   }, 5000);
