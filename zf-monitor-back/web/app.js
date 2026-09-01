@@ -1,209 +1,445 @@
 const state = {
-  summary: null,
-  history: null,
   hosts: [],
-  selectedHostId: null,
+  selectedHostId: '',
+  historyWindow: '3600',
+  requestToken: 0,
 };
 
-function getSelectedHostId() {
-  const params = new URLSearchParams(window.location.search);
-  const hostId = params.get('hostId');
-  if (hostId) {
-    state.selectedHostId = hostId;
-    return hostId;
-  }
-  return state.selectedHostId || null;
+const els = {
+  hostSelect: document.getElementById('host-select'),
+  hostName: document.getElementById('host-name'),
+  hostStatusText: document.getElementById('host-status-text'),
+  hostStatusPill: document.getElementById('host-status-pill'),
+  hostLastSeen: document.getElementById('host-last-seen'),
+  globalHostStatus: document.getElementById('global-host-status'),
+  pageError: document.getElementById('page-error'),
+  historyWindow: document.getElementById('history-window'),
+  cpuChart: document.getElementById('cpu-chart'),
+  processTableBody: document.getElementById('process-table-body'),
+  alertList: document.getElementById('alert-list'),
+  cpuValue: document.getElementById('cpu-value'),
+  memoryValue: document.getElementById('memory-value'),
+  diskValue: document.getElementById('disk-value'),
+  networkValue: document.getElementById('network-value'),
+  networkUp: document.getElementById('network-up'),
+  networkDown: document.getElementById('network-down'),
+  cpuProgress: document.getElementById('cpu-progress'),
+  memoryProgress: document.getElementById('memory-progress'),
+  diskProgress: document.getElementById('disk-progress'),
+};
+
+function setPageError(message) {
+  els.pageError.textContent = message;
+  els.pageError.classList.remove('hidden');
+}
+
+function clearPageError() {
+  els.pageError.textContent = '';
+  els.pageError.classList.add('hidden');
+}
+
+function normalizeHostId(hostId) {
+  return (hostId || '').trim();
 }
 
 function updateQueryHost(hostId) {
   const url = new URL(window.location.href);
-  url.searchParams.set('hostId', hostId);
+  if (hostId) {
+    url.searchParams.set('hostId', hostId);
+  } else {
+    url.searchParams.delete('hostId');
+  }
   window.history.replaceState({}, '', url);
 }
 
-function formatNumber(value, suffix = '') {
-  if (value === null || value === undefined || Number.isNaN(value)) return `0${suffix}`;
-  return `${value.toFixed(1)}${suffix}`;
+function formatPercent(value) {
+  if (!Number.isFinite(value)) {
+    return '0.0%';
+  }
+  return `${Number(value).toFixed(1)}%`;
+}
+
+function formatKbps(value) {
+  if (!Number.isFinite(value)) {
+    return '0.0';
+  }
+  return `${(Number(value) / 1024).toFixed(1)}`;
+}
+
+function formatMemoryMB(value) {
+  if (!Number.isFinite(value)) {
+    return '0.0 MB';
+  }
+  return `${Number(value).toFixed(1)} MB`;
+}
+
+function getHostById(hostId) {
+  return state.hosts.find((host) => host.hostId === hostId) || null;
+}
+
+function getUrlHostId() {
+  const params = new URLSearchParams(window.location.search);
+  return normalizeHostId(params.get('hostId'));
+}
+
+function renderGlobalStatus() {
+  const hosts = state.hosts || [];
+  if (!hosts.length) {
+    els.globalHostStatus.textContent = '● No monitored hosts available';
+    els.globalHostStatus.className = 'global-status offline';
+    return;
+  }
+
+  const offlineCount = hosts.filter((host) => String(host.status).toLowerCase() !== 'online').length;
+  if (offlineCount === 0) {
+    els.globalHostStatus.textContent = '● All monitored hosts online';
+    els.globalHostStatus.className = 'global-status online';
+    return;
+  }
+
+  const label = offlineCount === 1 ? '1 host offline' : `${offlineCount} hosts offline`;
+  els.globalHostStatus.textContent = `● ${label}`;
+  els.globalHostStatus.className = 'global-status offline';
 }
 
 function renderHostOptions() {
-  const select = document.getElementById('host-select');
-  if (!select) return;
-
-  select.innerHTML = '';
-  if (!state.hosts || state.hosts.length === 0) {
-    const option = document.createElement('option');
-    option.value = '';
-    option.textContent = 'No hosts';
-    select.appendChild(option);
+  if (!els.hostSelect) {
     return;
   }
 
-  const selectedId = getSelectedHostId();
+  const currentValue = normalizeHostId(state.selectedHostId);
+  els.hostSelect.innerHTML = '';
+
+  if (!state.hosts.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = 'No hosts available';
+    els.hostSelect.appendChild(option);
+    els.hostSelect.value = '';
+    return;
+  }
+
   state.hosts.forEach((host) => {
     const option = document.createElement('option');
     option.value = host.hostId;
-    option.textContent = `${host.hostname || host.hostId} • ${host.status === 'online' ? 'Online' : 'Offline'}`;
-    if (host.hostId === selectedId) {
+    option.textContent = host.hostname || host.hostId;
+    if (host.hostId === currentValue) {
       option.selected = true;
     }
-    select.appendChild(option);
+    els.hostSelect.appendChild(option);
   });
-}
 
-function loadHosts() {
-  fetch('/api/hosts', { cache: 'no-store' })
-    .then((res) => res.json())
-    .then((data) => {
-      state.hosts = data || [];
-      const selectedId = getSelectedHostId();
-      if (!selectedId && state.hosts.length > 0) {
-        state.selectedHostId = state.hosts[0].hostId;
-      }
-      if (state.selectedHostId && !state.hosts.some((h) => h.hostId === state.selectedHostId)) {
-        state.selectedHostId = state.hosts[0]?.hostId || null;
-      }
-      if (state.selectedHostId) {
-        updateQueryHost(state.selectedHostId);
-      }
-      renderHostOptions();
-      if (state.selectedHostId) {
-        updateSummary();
-        updateHistory();
-      }
-    })
-    .catch((err) => console.error('hosts fetch failed', err));
-}
-
-function updateSummary() {
-  const hostId = getSelectedHostId();
-  if (!hostId) {
-    document.getElementById('hostname').textContent = 'Unknown';
-    document.getElementById('status-badge').textContent = 'Offline';
-    document.getElementById('status-badge').className = 'status-badge offline';
-    document.getElementById('last-seen').textContent = '-';
-    document.getElementById('cpu-value').textContent = '0%';
-    document.getElementById('memory-value').textContent = '0%';
-    document.getElementById('disk-value').textContent = '0%';
-    document.getElementById('network-value').textContent = '0 KB/s / 0 KB/s';
-    return;
+  if (currentValue && state.hosts.some((host) => host.hostId === currentValue)) {
+    els.hostSelect.value = currentValue;
+  } else {
+    state.selectedHostId = state.hosts[0].hostId;
+    els.hostSelect.value = state.selectedHostId;
+    updateQueryHost(state.selectedHostId);
   }
+}
 
-  fetch(`/api/summary?hostId=${encodeURIComponent(hostId)}`, { cache: 'no-store' })
-    .then((res) => {
+function setNoDataView() {
+  els.hostName.textContent = 'Waiting for monitoring agents...';
+  els.hostStatusText.textContent = 'Offline';
+  els.hostStatusPill.className = 'host-status-pill offline';
+  els.hostLastSeen.textContent = 'Last Seen: -';
+
+  els.cpuValue.textContent = '0.0%';
+  els.memoryValue.textContent = '0.0%';
+  els.diskValue.textContent = '0.0%';
+  els.networkValue.textContent = '';
+  els.networkUp.textContent = '0.0 KB/s Up';
+  els.networkDown.textContent = '0.0 KB/s Down';
+
+  els.cpuProgress.style.width = '0%';
+  els.memoryProgress.style.width = '0%';
+  els.diskProgress.style.width = '0%';
+
+  clearHistoryChart();
+  renderProcesses({ processes: [] });
+  renderAlerts([]);
+}
+
+async function loadHosts() {
+  try {
+    const data = await fetch('/api/hosts', { cache: 'no-store' }).then((res) => {
       if (!res.ok) {
-        throw new Error('summary not found');
+        throw new Error('Failed to load hosts');
       }
       return res.json();
-    })
-    .then((data) => {
-      state.summary = data;
-      document.getElementById('hostname').textContent = data.hostname || 'Unknown';
-      const statusBadge = document.getElementById('status-badge');
-      const online = data.status === 'online';
-      statusBadge.textContent = online ? 'Online' : 'Offline';
-      statusBadge.className = 'status-badge ' + (online ? 'online' : 'offline');
-      document.getElementById('last-seen').textContent = data.lastSeen || '-';
-      document.getElementById('cpu-value').textContent = formatNumber(data.cpu, '%');
-      document.getElementById('memory-value').textContent = formatNumber(data.memory, '%');
-      document.getElementById('disk-value').textContent = formatNumber(data.disk, '%');
-      document.getElementById('network-value').textContent = `${formatNumber(data.netUp / 1024, ' KB/s')} / ${formatNumber(data.netDown / 1024, ' KB/s')}`;
+    });
 
-      const body = document.getElementById('process-table-body');
-      body.innerHTML = '';
-      (data.processes || []).slice(0, 8).forEach((p) => {
-        const row = document.createElement('tr');
-        row.innerHTML = `
-          <td>${p.name || '-'}</td>
-          <td>${p.pid || '-'}</td>
-          <td>${formatNumber(p.cpu, '%')}</td>
-          <td>${formatNumber(p.memoryMB, ' MB')}</td>
-        `;
-        body.appendChild(row);
-      });
+    state.hosts = Array.isArray(data) ? data : [];
+    renderGlobalStatus();
 
-      const alertList = document.getElementById('alert-list');
-      alertList.innerHTML = '';
-      if (!data.alerts || data.alerts.length === 0) {
-        const li = document.createElement('li');
-        li.className = 'alert-normal';
-        li.textContent = 'No active alerts';
-        alertList.appendChild(li);
-      } else {
-        data.alerts.forEach((a) => {
-          const li = document.createElement('li');
-          const level = (a.level || 'normal').toLowerCase();
-          li.className = level === 'critical' ? 'alert-critical' : level === 'warning' ? 'alert-warning' : 'alert-normal';
-          li.textContent = `${(a.level || 'INFO').toUpperCase()} - ${a.message}`;
-          alertList.appendChild(li);
-        });
-      }
-    })
-    .catch((err) => console.error('summary fetch failed', err));
+    if (!state.hosts.length) {
+      state.selectedHostId = '';
+      updateQueryHost('');
+      renderHostOptions();
+      setNoDataView();
+      return;
+    }
+
+    const urlHostId = getUrlHostId();
+    const currentSelectionExists = state.selectedHostId && getHostById(state.selectedHostId);
+    if (urlHostId && getHostById(urlHostId)) {
+      state.selectedHostId = urlHostId;
+    } else if (!currentSelectionExists) {
+      state.selectedHostId = state.hosts[0].hostId;
+    }
+
+    updateQueryHost(state.selectedHostId);
+    renderHostOptions();
+    if (state.selectedHostId) {
+      refreshSelectedHostData();
+    }
+  } catch (err) {
+    console.error('hosts fetch failed', err);
+    renderGlobalStatus();
+    setPageError('Unable to load monitoring data');
+  }
 }
 
-function renderChart(canvasId, points, color) {
-  const canvas = document.getElementById(canvasId);
+function updateHostStatusUI(summary) {
+  const status = String(summary.status || 'offline').toLowerCase();
+  const isOnline = status === 'online';
+  const hostName = summary.hostname || state.selectedHostId || 'Unknown host';
+
+  els.hostName.textContent = hostName;
+  els.hostStatusText.textContent = isOnline ? 'Online' : 'Offline';
+  els.hostStatusPill.className = 'host-status-pill ' + (isOnline ? 'online' : 'offline');
+  els.hostLastSeen.textContent = summary.lastSeen ? `Last Seen: ${summary.lastSeen}` : 'Last Seen: -';
+}
+
+function renderMetrics(summary) {
+  const cpu = Number(summary.cpu || 0);
+  const memory = Number(summary.memory || 0);
+  const disk = Number(summary.disk || 0);
+  const netUp = Number(summary.netUp || 0);
+  const netDown = Number(summary.netDown || 0);
+
+  els.cpuValue.textContent = formatPercent(cpu);
+  els.memoryValue.textContent = formatPercent(memory);
+  els.diskValue.textContent = formatPercent(disk);
+  els.networkValue.textContent = '';
+  els.networkUp.textContent = `${formatKbps(netUp)} KB/s Up`;
+  els.networkDown.textContent = `${formatKbps(netDown)} KB/s Down`;
+
+  els.cpuProgress.style.width = `${Math.min(Math.max(cpu, 0), 100)}%`;
+  els.memoryProgress.style.width = `${Math.min(Math.max(memory, 0), 100)}%`;
+  els.diskProgress.style.width = `${Math.min(Math.max(disk, 0), 100)}%`;
+}
+
+function drawHistoryChart(points, color) {
+  const canvas = els.cpuChart;
   const ctx = canvas.getContext('2d');
   const width = canvas.width;
   const height = canvas.height;
+
   ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, width, height);
 
   ctx.strokeStyle = '#e5e7eb';
+  ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(30, 20);
-  ctx.lineTo(30, height - 30);
-  ctx.lineTo(width - 10, height - 30);
+  ctx.moveTo(40, 18);
+  ctx.lineTo(40, height - 28);
+  ctx.lineTo(width - 12, height - 28);
   ctx.stroke();
 
-  if (!points || points.length === 0) {
+  if (!Array.isArray(points) || points.length === 0) {
+    ctx.fillStyle = '#64748b';
+    ctx.font = '14px Segoe UI';
+    ctx.fillText('No history data', 46, height / 2);
     return;
   }
 
-  const values = points.map((p) => p.value);
-  const min = Math.min(...values, 0);
-  const max = Math.max(...values, 100);
-  const range = Math.max(max - min, 1);
+  const values = points.map((item) => Number(item.value || 0));
+  const min = 0;
+  const max = 100;
 
-  ctx.strokeStyle = color;
+  const lineColors = ['#2563eb'];
+  ctx.strokeStyle = lineColors[0];
   ctx.lineWidth = 2;
   ctx.beginPath();
-  points.forEach((p, index) => {
-    const x = 30 + (index / Math.max(points.length - 1, 1)) * (width - 40);
-    const y = height - 30 - ((p.value - min) / range) * (height - 50);
-    if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+
+  points.forEach((point, index) => {
+    const x = 40 + (index / Math.max(points.length - 1, 1)) * (width - 52);
+    const y = height - 28 - ((Number(point.value || 0) - min) / Math.max(max - min, 1)) * (height - 60);
+
+    if (index === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
   });
+
   ctx.stroke();
+
+  ctx.fillStyle = '#64748b';
+  ctx.font = '11px Segoe UI';
+  for (let i = 0; i <= 4; i += 1) {
+    const value = Math.round((max - i * (max / 4)));
+    const y = 20 + ((i / 4) * (height - 48));
+    ctx.fillText(`${value}%`, 0, y + 4);
+  }
+
+  const sample = points.slice(-6);
+  sample.forEach((point, index) => {
+    const x = 40 + (index / Math.max(sample.length - 1, 1)) * (width - 52);
+    const y = height - 28;
+    const ts = new Date(point.timestamp);
+    const label = `${String(ts.getHours()).padStart(2, '0')}:${String(ts.getMinutes()).padStart(2, '0')}`;
+    ctx.fillStyle = '#64748b';
+    ctx.fillText(label, x - 12, y + 16);
+  });
+
+  ctx.strokeStyle = color;
 }
 
-function updateHistory() {
-  const hostId = getSelectedHostId();
-  if (!hostId) return;
-
-  fetch(`/api/history?hostId=${encodeURIComponent(hostId)}&window=1800`, { cache: 'no-store' })
-    .then((res) => res.json())
-    .then((data) => {
-      state.history = data;
-      renderChart('cpu-chart', data.cpu || [], '#22c55e');
-      renderChart('memory-chart', data.memory || [], '#3b82f6');
-    })
-    .catch((err) => console.error('history fetch failed', err));
+function clearHistoryChart() {
+  const canvas = els.cpuChart;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#64748b';
+  ctx.font = '14px Segoe UI';
+  ctx.fillText('No history data', 46, canvas.height / 2);
 }
 
-document.getElementById('host-select').addEventListener('change', (event) => {
-  const hostId = event.target.value;
-  if (!hostId) return;
-  state.selectedHostId = hostId;
-  updateQueryHost(hostId);
-  updateSummary();
-  updateHistory();
+function renderHistory(data) {
+  const points = Array.isArray(data && data.cpu) ? data.cpu : [];
+  drawHistoryChart(points, '#2563eb');
+}
+
+function renderProcesses(payload) {
+  const processes = Array.isArray(payload && payload.processes) ? payload.processes : [];
+  els.processTableBody.innerHTML = '';
+
+  if (!processes.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 4;
+    cell.textContent = 'No process data';
+    cell.style.color = '#64748b';
+    cell.style.padding = '14px 8px';
+    row.appendChild(cell);
+    els.processTableBody.appendChild(row);
+    return;
+  }
+
+  processes.slice(0, 8).forEach((process) => {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${process.name || '-'}</td>
+      <td>${formatPercent(process.cpu || 0)}</td>
+      <td>${formatMemoryMB(process.memoryMB || 0)}</td>
+      <td>${process.pid || '-'}</td>
+    `;
+    els.processTableBody.appendChild(row);
+  });
+}
+
+function renderAlerts(alerts) {
+  els.alertList.innerHTML = '';
+
+  if (!Array.isArray(alerts) || alerts.length === 0) {
+    const item = document.createElement('li');
+    item.className = 'alert-item normal';
+    item.innerHTML = '<span class="alert-icon">✓</span><span>No recent alerts. All clear!</span>';
+    els.alertList.appendChild(item);
+    return;
+  }
+
+  alerts.slice(0, 5).forEach((alert) => {
+    const level = String(alert.level || 'warning').toLowerCase();
+    const item = document.createElement('li');
+    item.className = `alert-item ${level === 'critical' ? 'critical' : 'warning'}`;
+    item.innerHTML = `<span class="alert-icon">${level === 'critical' ? '!' : '⚠'}</span><span>${(level || 'WARNING').toUpperCase()} - ${alert.message || 'Alert'}</span>`;
+    els.alertList.appendChild(item);
+  });
+}
+
+function updateHostSelection(hostId) {
+  state.selectedHostId = normalizeHostId(hostId);
+  updateQueryHost(state.selectedHostId);
+  renderHostOptions();
+  refreshSelectedHostData();
+}
+
+async function refreshSelectedHostData() {
+  const hostId = normalizeHostId(state.selectedHostId);
+  if (!hostId) {
+    setNoDataView();
+    return;
+  }
+
+  const token = ++state.requestToken;
+  const currentHostId = hostId;
+
+  try {
+    const [summary, history, processes] = await Promise.all([
+      fetch(`/api/summary?hostId=${encodeURIComponent(currentHostId)}`, { cache: 'no-store' }).then((res) => {
+        if (!res.ok) {
+          throw new Error('summary failed');
+        }
+        return res.json();
+      }),
+      fetch(`/api/history?hostId=${encodeURIComponent(currentHostId)}&window=${encodeURIComponent(state.historyWindow)}`, { cache: 'no-store' }).then((res) => {
+        if (!res.ok) {
+          throw new Error('history failed');
+        }
+        return res.json();
+      }),
+      fetch(`/api/processes?hostId=${encodeURIComponent(currentHostId)}`, { cache: 'no-store' }).then((res) => {
+        if (!res.ok) {
+          throw new Error('processes failed');
+        }
+        return res.json();
+      }),
+    ]);
+
+    if (token !== state.requestToken || currentHostId !== normalizeHostId(state.selectedHostId)) {
+      return;
+    }
+
+    clearPageError();
+    updateHostStatusUI(summary);
+    renderMetrics(summary);
+    renderHistory(history);
+    renderProcesses(processes);
+    renderAlerts(summary.alerts || []);
+  } catch (err) {
+    console.error('monitoring data fetch failed', err);
+    if (token !== state.requestToken || currentHostId !== normalizeHostId(state.selectedHostId)) {
+      return;
+    }
+    setPageError('Unable to load monitoring data');
+    setNoDataView();
+  }
+}
+
+els.hostSelect.addEventListener('change', (event) => {
+  updateHostSelection(event.target.value);
 });
 
-setInterval(() => {
+els.historyWindow.addEventListener('change', (event) => {
+  state.historyWindow = event.target.value;
+  if (state.selectedHostId) {
+    refreshSelectedHostData();
+  }
+});
+
+window.addEventListener('load', () => {
   loadHosts();
-}, 10000);
-setInterval(() => {
-  updateSummary();
-  updateHistory();
-}, 5000);
-loadHosts();
+  setInterval(loadHosts, 12000);
+  setInterval(() => {
+    if (state.selectedHostId) {
+      refreshSelectedHostData();
+    }
+  }, 5000);
+});
+
+setNoDataView();

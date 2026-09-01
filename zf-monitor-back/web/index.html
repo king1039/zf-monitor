@@ -7,92 +7,127 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div class="layout">
+    <div class="app-shell">
       <aside class="sidebar">
-        <div class="brand">ZF Monitor</div>
-        <nav class="nav">
-          <a href="#" class="nav-item active">Overview</a>
-          <a href="#" class="nav-item">Hosts</a>
-          <a href="#" class="nav-item">Alerts</a>
-          <a href="#" class="nav-item">Settings</a>
-        </nav>
-      </aside>
-
-      <main class="container">
-        <header class="topbar">
-          <div class="title-wrap">
-            <h1>Hosts</h1>
-          </div>
-          <div class="status-box">
-            <span id="hostname">-</span>
-            <span id="status-badge" class="status-badge offline">Offline</span>
-          </div>
-        </header>
-
-        <section class="hosts-panel">
-          <div class="host-select-row">
-            <label class="host-select-label" for="host-select">Host</label>
-            <select id="host-select" class="host-select"></select>
-          </div>
-        </section>
-
-        <div class="meta-row">
-          <div class="meta-item">
-            <label>Last Seen</label>
-            <span id="last-seen">-</span>
-          </div>
+        <div class="brand-row">
+          <div class="brand-icon" aria-hidden="true">◫</div>
+          <div class="brand-text">ZF Monitor</div>
         </div>
 
-        <section class="cards">
-          <div class="card">
-            <div class="label">CPU</div>
-            <div id="cpu-value" class="value">0%</div>
+        <nav class="sidebar-nav" aria-label="Sidebar navigation">
+          <button type="button" class="nav-item active">Overview</button>
+          <button type="button" class="nav-item">Hosts</button>
+          <button type="button" class="nav-item">Alerts</button>
+          <button type="button" class="nav-item">Settings</button>
+        </nav>
+
+        <div class="sidebar-version">v1.0.0</div>
+      </aside>
+
+      <main class="main-panel">
+        <header class="main-header">
+          <div class="page-title-wrap">
+            <div class="page-icon" aria-hidden="true">▣</div>
+            <h1>Windows Infrastructure Monitoring</h1>
           </div>
-          <div class="card">
-            <div class="label">Memory</div>
-            <div id="memory-value" class="value">0%</div>
-          </div>
-          <div class="card">
-            <div class="label">Disk</div>
-            <div id="disk-value" class="value">0%</div>
-          </div>
-          <div class="card">
-            <div class="label">Network</div>
-            <div id="network-value" class="value">0 KB/s</div>
-          </div>
+          <div id="global-host-status" class="global-status online">● All monitored hosts online</div>
+        </header>
+
+        <section class="host-selector-block">
+          <label for="host-select">Select Host</label>
+          <select id="host-select" class="host-select" aria-label="Select Host"></select>
         </section>
 
-        <section class="charts">
-          <div class="chart-card">
-            <h3>CPU History</h3>
-            <canvas id="cpu-chart" width="520" height="220"></canvas>
+        <section class="host-summary">
+          <div class="host-name-row">
+            <div class="host-display-icon" aria-hidden="true">🖥</div>
+            <span id="host-name" class="host-name">Waiting for monitoring agents...</span>
+            <span id="host-status-pill" class="host-status-pill offline">
+              <span class="status-dot"></span>
+              <span id="host-status-text">Offline</span>
+            </span>
           </div>
-          <div class="chart-card">
-            <h3>Memory History</h3>
-            <canvas id="memory-chart" width="520" height="220"></canvas>
-          </div>
+          <div id="host-last-seen" class="host-last-seen">Last Seen: -</div>
         </section>
 
-        <section class="bottom-grid">
-          <div class="panel">
-            <h3>Top Processes</h3>
-            <table>
+        <div id="page-error" class="page-error hidden">Unable to load monitoring data</div>
+
+        <section class="metric-grid">
+          <article class="metric-card">
+            <div class="metric-header">
+              <div class="metric-icon cpu">◔</div>
+              <div class="metric-label">CPU</div>
+            </div>
+            <div id="cpu-value" class="metric-value">0.0%</div>
+            <div class="progress-track"><span id="cpu-progress" class="progress-fill progress-cpu"></span></div>
+          </article>
+
+          <article class="metric-card">
+            <div class="metric-header">
+              <div class="metric-icon memory">◫</div>
+              <div class="metric-label">Memory</div>
+            </div>
+            <div id="memory-value" class="metric-value">0.0%</div>
+            <div class="progress-track"><span id="memory-progress" class="progress-fill progress-memory"></span></div>
+          </article>
+
+          <article class="metric-card">
+            <div class="metric-header">
+              <div class="metric-icon disk">▣</div>
+              <div class="metric-label">Disk</div>
+            </div>
+            <div id="disk-value" class="metric-value">0.0%</div>
+            <div class="progress-track"><span id="disk-progress" class="progress-fill progress-disk"></span></div>
+          </article>
+
+          <article class="metric-card">
+            <div class="metric-header">
+              <div class="metric-icon network">⇅</div>
+              <div class="metric-label">Network</div>
+            </div>
+            <div id="network-value" class="metric-value small">0.0 KB/s</div>
+            <div class="network-meta">
+              <span id="network-up">0.0 KB/s Up</span>
+              <span id="network-down">0.0 KB/s Down</span>
+            </div>
+          </article>
+        </section>
+
+        <section class="dashboard-grid">
+          <article class="panel panel-history">
+            <div class="panel-head">
+              <h2>CPU History</h2>
+              <select id="history-window" class="history-window" aria-label="History time window">
+                <option value="1800">Last 30 minutes</option>
+                <option value="3600" selected>Last 1 hour</option>
+              </select>
+            </div>
+            <canvas id="cpu-chart" width="560" height="220"></canvas>
+          </article>
+
+          <article class="panel panel-processes">
+            <div class="panel-head">
+              <h2>Top Processes</h2>
+            </div>
+            <table class="process-table">
               <thead>
                 <tr>
-                  <th>Name</th>
+                  <th>Process</th>
+                  <th>CPU</th>
+                  <th>Memory</th>
                   <th>PID</th>
-                  <th>CPU %</th>
-                  <th>Memory MB</th>
                 </tr>
               </thead>
               <tbody id="process-table-body"></tbody>
             </table>
-          </div>
+          </article>
+        </section>
 
-          <div class="panel">
-            <h3>Recent Alerts</h3>
-            <ul id="alert-list" class="alert-list"></ul>
+        <section class="alert-card">
+          <div class="panel-head alert-head">
+            <h2>Recent Alerts</h2>
           </div>
+          <ul id="alert-list" class="alert-list"></ul>
         </section>
       </main>
     </div>
