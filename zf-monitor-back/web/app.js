@@ -12,7 +12,6 @@ const els = {
   hostStatusText: document.getElementById('host-status-text'),
   hostStatusPill: document.getElementById('host-status-pill'),
   hostLastSeen: document.getElementById('host-last-seen'),
-  globalHostStatus: document.getElementById('global-host-status'),
   pageError: document.getElementById('page-error'),
   historyWindow: document.getElementById('history-window'),
   cpuChart: document.getElementById('cpu-chart'),
@@ -110,26 +109,6 @@ function getUrlHostId() {
   return normalizeHostId(params.get('hostId'));
 }
 
-function renderGlobalStatus() {
-  const hosts = state.hosts || [];
-  if (!hosts.length) {
-    els.globalHostStatus.textContent = '● No monitored hosts available';
-    els.globalHostStatus.className = 'global-status offline';
-    return;
-  }
-
-  const offlineCount = hosts.filter((host) => String(host.status).toLowerCase() !== 'online').length;
-  if (offlineCount === 0) {
-    els.globalHostStatus.textContent = '● All monitored hosts online';
-    els.globalHostStatus.className = 'global-status online';
-    return;
-  }
-
-  const label = offlineCount === 1 ? '1 host offline' : `${offlineCount} hosts offline`;
-  els.globalHostStatus.textContent = `● ${label}`;
-  els.globalHostStatus.className = 'global-status offline';
-}
-
 function renderHostOptions() {
   if (!els.hostSelect) {
     return;
@@ -198,7 +177,6 @@ async function loadHosts() {
     });
 
     state.hosts = Array.isArray(data) ? data : [];
-    renderGlobalStatus();
 
     if (!state.hosts.length) {
       state.selectedHostId = '';
@@ -223,7 +201,6 @@ async function loadHosts() {
     }
   } catch (err) {
     console.error('hosts fetch failed', err);
-    renderGlobalStatus();
     setPageError('Unable to load monitoring data');
   }
 }
