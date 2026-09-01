@@ -10,11 +10,18 @@ import (
 	"sort"
 	"time"
 
+	"golang.org/x/sys/windows/svc"
+
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/mem"
 	"github.com/shirou/gopsutil/v4/net"
 	"github.com/shirou/gopsutil/v4/process"
+)
+
+const (
+	serviceName        = "ZFMonitorAgent"
+	serviceDisplayName = "ZF Monitor Agent"
 )
 
 type ProcessInfo struct {
@@ -35,6 +42,8 @@ type Report struct {
 	Processes []ProcessInfo `json:"processes"`
 }
 
+type agentService struct{}
+
 var (
 	netLastSent uint64
 	netLastRecv uint64
@@ -42,26 +51,86 @@ var (
 )
 
 func main() {
+	isService, err := svc.IsWindowsService()
+	if err != nil {
+		log.Printf("svc.IsWindowsService() failed: %v", err)
+		isService = false
+	}
+
+	if isService {
+		if err := svc.Run(serviceName, &agentService{}); err != nil {
+			log.Fatalf("failed to run %s service: %v", serviceName, err)
+		}
+		return
+	}
+
+	runAgentLoop(nil)
+}
+
+func (m *agentService) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
+	changes <- svc.Status{State: svc.StartPending}
+
+	stopCh := make(chan struct{})
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		runAgentLoop(stopCh)
+	}()
+
+	changes <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
+
+	for {
+		select {
+		case c := <-r:
+			switch c.Cmd {
+			case svc.Interrogate:
+				changes <- c.CurrentStatus
+			case svc.Stop, svc.Shutdown:
+				changes <- svc.Status{State: svc.StopPending}
+				close(stopCh)
+				<-doneCh
+				changes <- svc.Status{State: svc.Stopped}
+				return false, 0
+			default:
+				log.Printf("service request %d ignored", c.Cmd)
+			}
+		case <-doneCh:
+			return false, 0
+		}
+	}
+}
+
+func runAgentLoop(stopCh <-chan struct{}) {
 	hostname, err := os.Hostname()
 	if err != nil {
 		hostname = "unknown-host"
 	}
 
 	for {
+		select {
+		case <-stopCh:
+			log.Printf("agent stop requested; exiting collection loop")
+			return
+		default:
+		}
+
 		report, err := collectReport(hostname)
 		if err != nil {
 			log.Printf("collect report failed: %v", err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
-
-		if err := sendReport(report); err != nil {
-			log.Printf("send report failed: %v", err)
 		} else {
-			log.Printf("report sent host=%s cpu=%.1f memory=%.1f", report.Hostname, report.CPU, report.Memory)
+			if err := sendReport(report); err != nil {
+				log.Printf("send report failed: %v", err)
+			} else {
+				log.Printf("report sent host=%s cpu=%.1f memory=%.1f", report.Hostname, report.CPU, report.Memory)
+			}
 		}
 
-		time.Sleep(5 * time.Second)
+		select {
+		case <-stopCh:
+			log.Printf("agent stop requested; exiting collection loop")
+			return
+		case <-time.After(5 * time.Second):
+		}
 	}
 }
 
