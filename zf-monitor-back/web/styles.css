@@ -306,7 +306,7 @@ body {
 
 .overview-host-table th,
 .overview-host-table td {
-  padding: 12px 8px;
+  padding: 12px;
   border-bottom: 1px solid var(--line);
   text-align: left;
   font-size: 13px;
@@ -320,31 +320,31 @@ body {
 
 .overview-host-table th:nth-child(1),
 .overview-host-table td:nth-child(1) {
-  width: 28%;
+  width: 20%;
   text-align: left;
 }
 
 .overview-host-table th:nth-child(2),
 .overview-host-table td:nth-child(2) {
-  width: 16%;
+  width: 18%;
   text-align: left;
 }
 
 .overview-host-table th:nth-child(3),
 .overview-host-table td:nth-child(3) {
-  width: 12%;
+  width: 15%;
   text-align: right;
 }
 
 .overview-host-table th:nth-child(4),
 .overview-host-table td:nth-child(4) {
-  width: 14%;
+  width: 16%;
   text-align: right;
 }
 
 .overview-host-table th:nth-child(5),
 .overview-host-table td:nth-child(5) {
-  width: 12%;
+  width: 15%;
   text-align: right;
 }
 
