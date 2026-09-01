@@ -7,75 +7,94 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div class="container">
-      <header class="topbar">
-        <div>
-          <h1>ZF Monitor</h1>
-        </div>
-        <div class="status-box">
-          <span id="hostname">-</span>
-          <span id="status-badge" class="status-badge offline">Offline</span>
-        </div>
-      </header>
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="brand">ZF Monitor</div>
+        <nav class="nav">
+          <a href="#" class="nav-item active">Overview</a>
+          <a href="#" class="nav-item">Hosts</a>
+          <a href="#" class="nav-item">Alerts</a>
+          <a href="#" class="nav-item">Settings</a>
+        </nav>
+      </aside>
 
-      <div class="meta-row">
-        <div class="meta-item">
-          <label>Last Seen</label>
-          <span id="last-seen">-</span>
-        </div>
-      </div>
+      <main class="container">
+        <header class="topbar">
+          <div class="title-wrap">
+            <h1>Hosts</h1>
+          </div>
+          <div class="status-box">
+            <span id="hostname">-</span>
+            <span id="status-badge" class="status-badge offline">Offline</span>
+          </div>
+        </header>
 
-      <section class="cards">
-        <div class="card">
-          <div class="label">CPU</div>
-          <div id="cpu-value" class="value">0%</div>
-        </div>
-        <div class="card">
-          <div class="label">Memory</div>
-          <div id="memory-value" class="value">0%</div>
-        </div>
-        <div class="card">
-          <div class="label">Disk</div>
-          <div id="disk-value" class="value">0%</div>
-        </div>
-        <div class="card">
-          <div class="label">Network</div>
-          <div id="network-value" class="value">0 KB/s</div>
-        </div>
-      </section>
+        <section class="hosts-panel">
+          <div class="host-select-row">
+            <label class="host-select-label" for="host-select">Host</label>
+            <select id="host-select" class="host-select"></select>
+          </div>
+        </section>
 
-      <section class="charts">
-        <div class="chart-card">
-          <h3>CPU History</h3>
-          <canvas id="cpu-chart" width="520" height="220"></canvas>
-        </div>
-        <div class="chart-card">
-          <h3>Memory History</h3>
-          <canvas id="memory-chart" width="520" height="220"></canvas>
-        </div>
-      </section>
-
-      <section class="bottom-grid">
-        <div class="panel">
-          <h3>Top Processes</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>PID</th>
-                <th>CPU %</th>
-                <th>Memory MB</th>
-              </tr>
-            </thead>
-            <tbody id="process-table-body"></tbody>
-          </table>
+        <div class="meta-row">
+          <div class="meta-item">
+            <label>Last Seen</label>
+            <span id="last-seen">-</span>
+          </div>
         </div>
 
-        <div class="panel">
-          <h3>Alerts</h3>
-          <ul id="alert-list" class="alert-list"></ul>
-        </div>
-      </section>
+        <section class="cards">
+          <div class="card">
+            <div class="label">CPU</div>
+            <div id="cpu-value" class="value">0%</div>
+          </div>
+          <div class="card">
+            <div class="label">Memory</div>
+            <div id="memory-value" class="value">0%</div>
+          </div>
+          <div class="card">
+            <div class="label">Disk</div>
+            <div id="disk-value" class="value">0%</div>
+          </div>
+          <div class="card">
+            <div class="label">Network</div>
+            <div id="network-value" class="value">0 KB/s</div>
+          </div>
+        </section>
+
+        <section class="charts">
+          <div class="chart-card">
+            <h3>CPU History</h3>
+            <canvas id="cpu-chart" width="520" height="220"></canvas>
+          </div>
+          <div class="chart-card">
+            <h3>Memory History</h3>
+            <canvas id="memory-chart" width="520" height="220"></canvas>
+          </div>
+        </section>
+
+        <section class="bottom-grid">
+          <div class="panel">
+            <h3>Top Processes</h3>
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>PID</th>
+                  <th>CPU %</th>
+                  <th>Memory MB</th>
+                </tr>
+              </thead>
+              <tbody id="process-table-body"></tbody>
+            </table>
+          </div>
+
+          <div class="panel">
+            <h3>Recent Alerts</h3>
+            <ul id="alert-list" class="alert-list"></ul>
+          </div>
+        </section>
+      </main>
     </div>
 
     <script src="/app.js"></script>

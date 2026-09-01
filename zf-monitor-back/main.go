@@ -22,6 +22,7 @@ type ProcessInfo struct {
 }
 
 type Report struct {
+	HostID    string        `json:"hostId"`
 	Hostname  string        `json:"hostname"`
 	Timestamp int64         `json:"timestamp"`
 	CPU       float64       `json:"cpu"`
@@ -44,7 +45,21 @@ type MetricPoint struct {
 	Value     float64 `json:"value"`
 }
 
+type HostRuntimeState struct {
+	Hostname  string
+	LastSeen  time.Time
+	Processes []ProcessInfo
+}
+
+type HostListItem struct {
+	HostID   string `json:"hostId"`
+	Hostname string `json:"hostname"`
+	Status   string `json:"status"`
+	LastSeen string `json:"lastSeen"`
+}
+
 type summaryResponse struct {
+	HostID    string        `json:"hostId"`
 	Hostname  string        `json:"hostname"`
 	Status    string        `json:"status"`
 	LastSeen  string        `json:"lastSeen"`
@@ -58,12 +73,11 @@ type summaryResponse struct {
 }
 
 var (
-	stateMu        sync.RWMutex
-	stateHost      string
-	stateLastSeen  time.Time
-	stateProcesses []ProcessInfo
-	stateAlertMap  = map[string]bool{}
-	stateDB        *sql.DB
+	stateMu       sync.RWMutex
+	alertMu       sync.Mutex
+	hostStates    = map[string]*HostRuntimeState{}
+	stateAlertMap = map[string]map[string]bool{}
+	stateDB       *sql.DB
 )
 
 func main() {
@@ -83,6 +97,7 @@ func main() {
 		log.Fatal(err)
 	}
 
+	http.HandleFunc("/api/hosts", handleHosts)
 	http.HandleFunc("/api/report", handleReport)
 	http.HandleFunc("/api/summary", handleSummary)
 	http.HandleFunc("/api/history", handleHistory)
@@ -95,21 +110,110 @@ func main() {
 
 func initDB(db *sql.DB) error {
 	queries := []string{
-		`CREATE TABLE IF NOT EXISTS metrics (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, name TEXT, value REAL, unit TEXT);`,
-		`CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, rule_name TEXT, level TEXT, message TEXT, timestamp TEXT);`,
+		`CREATE TABLE IF NOT EXISTS hosts (host_id TEXT PRIMARY KEY, hostname TEXT, last_seen TEXT);`,
+		`CREATE TABLE IF NOT EXISTS metrics (id INTEGER PRIMARY KEY AUTOINCREMENT, host_id TEXT NOT NULL, timestamp TEXT, name TEXT, value REAL, unit TEXT);`,
+		`CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, host_id TEXT NOT NULL, rule_name TEXT, level TEXT, message TEXT, timestamp TEXT);`,
 	}
 	for _, query := range queries {
 		if _, err := db.Exec(query); err != nil {
 			return err
 		}
 	}
+
+	if err := ensureColumn(db, "metrics", "host_id"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "alerts", "host_id"); err != nil {
+		return err
+	}
 	return nil
+}
+
+func ensureColumn(db *sql.DB, tableName, columnName string) error {
+	rows, err := db.Query("PRAGMA table_info(" + tableName + ")")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, colType, notNull, dfltValue, pk interface{}
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
+			return err
+		}
+		if name == columnName {
+			return nil
+		}
+	}
+	_, err = db.Exec("ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " TEXT")
+	return err
 }
 
 func setNoCache(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
+}
+
+func normalizeHostID(hostID, hostname string) string {
+	if hostID != "" {
+		return hostID
+	}
+	if hostname != "" {
+		return hostname
+	}
+	return "unknown-host"
+}
+
+func saveHostRecord(hostID, hostname string, lastSeen time.Time) error {
+	if stateDB == nil {
+		return nil
+	}
+	_, err := stateDB.Exec(`INSERT INTO hosts (host_id, hostname, last_seen) VALUES (?, ?, ?) ON CONFLICT(host_id) DO UPDATE SET hostname = excluded.hostname, last_seen = excluded.last_seen`, hostID, hostname, lastSeen.UTC().Format(time.RFC3339))
+	return err
+}
+
+func handleHosts(w http.ResponseWriter, r *http.Request) {
+	setNoCache(w)
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	hosts, err := listHosts()
+	if err != nil {
+		http.Error(w, "failed to read hosts", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(hosts)
+}
+
+func listHosts() ([]HostListItem, error) {
+	if stateDB == nil {
+		return nil, nil
+	}
+	rows, err := stateDB.Query(`SELECT host_id, hostname, last_seen FROM hosts ORDER BY hostname ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := []HostListItem{}
+	for rows.Next() {
+		var hostID, hostname, lastSeen string
+		if err := rows.Scan(&hostID, &hostname, &lastSeen); err != nil {
+			return nil, err
+		}
+		status := "offline"
+		if ts, err := time.Parse(time.RFC3339, lastSeen); err == nil && time.Since(ts).Seconds() <= 15 {
+			status = "online"
+		}
+		items = append(items, HostListItem{HostID: hostID, Hostname: hostname, Status: status, LastSeen: lastSeen})
+	}
+	return items, nil
 }
 
 func handleReport(w http.ResponseWriter, r *http.Request) {
@@ -125,13 +229,24 @@ func handleReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	report.HostID = normalizeHostID(report.HostID, report.Hostname)
+	lastSeen := time.Now()
+	if err := saveHostRecord(report.HostID, report.Hostname, lastSeen); err != nil {
+		log.Printf("save host record failed: %v", err)
+	}
+
 	stateMu.Lock()
-	stateHost = report.Hostname
-	stateLastSeen = time.Now()
-	stateProcesses = report.Processes
+	stateHost := hostStates[report.HostID]
+	if stateHost == nil {
+		stateHost = &HostRuntimeState{}
+	}
+	stateHost.Hostname = report.Hostname
+	stateHost.LastSeen = lastSeen
+	stateHost.Processes = append([]ProcessInfo(nil), report.Processes...)
+	hostStates[report.HostID] = stateHost
 	stateMu.Unlock()
 
-	log.Printf("received report host=%s cpu=%.1f memory=%.1f", report.Hostname, report.CPU, report.Memory)
+	log.Printf("received report hostId=%s host=%s cpu=%.1f memory=%.1f", report.HostID, report.Hostname, report.CPU, report.Memory)
 
 	if err := saveMetrics(report); err != nil {
 		log.Printf("save metrics failed: %v", err)
@@ -144,45 +259,66 @@ func handleReport(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
+func loadHostState(hostID string) (HostRuntimeState, bool) {
+	stateMu.RLock()
+	state, ok := hostStates[hostID]
+	stateMu.RUnlock()
+	if ok && state != nil {
+		return *state, true
+	}
+	if stateDB == nil {
+		return HostRuntimeState{}, false
+	}
+	row := stateDB.QueryRow(`SELECT hostname, last_seen FROM hosts WHERE host_id = ?`, hostID)
+	var hostname, lastSeen string
+	if err := row.Scan(&hostname, &lastSeen); err != nil {
+		return HostRuntimeState{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339, lastSeen)
+	if err != nil {
+		parsed = time.Now()
+	}
+	return HostRuntimeState{Hostname: hostname, LastSeen: parsed}, true
+}
+
 func handleSummary(w http.ResponseWriter, r *http.Request) {
 	setNoCache(w)
-	stateMu.RLock()
-	hostname := stateHost
-	lastSeen := stateLastSeen
-	processes := append([]ProcessInfo(nil), stateProcesses...)
-	stateMu.RUnlock()
+	hostID := r.URL.Query().Get("hostId")
+	if hostID == "" {
+		http.Error(w, "hostId is required", http.StatusBadRequest)
+		return
+	}
 
-	var current Report
-	current.Hostname = hostname
-	current.Processes = processes
+	state, ok := loadHostState(hostID)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
 
-	latest, err := getLatestMetrics()
-	if err == nil {
-		current.CPU = latest["cpu"]
-		current.Memory = latest["memory"]
-		current.Disk = latest["disk"]
-		current.NetUp = latest["net_up"]
-		current.NetDown = latest["net_down"]
+	latest, err := getLatestMetricsForHost(hostID)
+	if err != nil {
+		latest = map[string]float64{"cpu": 0, "memory": 0, "disk": 0, "net_up": 0, "net_down": 0}
 	}
 
 	status := "offline"
-	if !lastSeen.IsZero() && time.Since(lastSeen).Seconds() <= 15 {
+	if !state.LastSeen.IsZero() && time.Since(state.LastSeen).Seconds() <= 15 {
 		status = "online"
 	}
 
 	response := summaryResponse{
-		Hostname:  hostname,
+		HostID:    hostID,
+		Hostname:  state.Hostname,
 		Status:    status,
-		CPU:       current.CPU,
-		Memory:    current.Memory,
-		Disk:      current.Disk,
-		NetUp:     current.NetUp,
-		NetDown:   current.NetDown,
-		Processes: processes,
-		Alerts:    currentAlerts(current),
+		CPU:       latest["cpu"],
+		Memory:    latest["memory"],
+		Disk:      latest["disk"],
+		NetUp:     latest["net_up"],
+		NetDown:   latest["net_down"],
+		Processes: append([]ProcessInfo(nil), state.Processes...),
+		Alerts:    getRecentAlerts(hostID),
 	}
-	if !lastSeen.IsZero() {
-		response.LastSeen = lastSeen.Format(time.RFC3339)
+	if !state.LastSeen.IsZero() {
+		response.LastSeen = state.LastSeen.Format(time.RFC3339)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -191,6 +327,16 @@ func handleSummary(w http.ResponseWriter, r *http.Request) {
 
 func handleHistory(w http.ResponseWriter, r *http.Request) {
 	setNoCache(w)
+	hostID := r.URL.Query().Get("hostId")
+	if hostID == "" {
+		http.Error(w, "hostId is required", http.StatusBadRequest)
+		return
+	}
+	if _, ok := loadHostState(hostID); !ok {
+		http.NotFound(w, r)
+		return
+	}
+
 	window := 1800
 	if value := r.URL.Query().Get("window"); value != "" {
 		if v, err := strconv.Atoi(value); err == nil && v > 0 {
@@ -201,7 +347,7 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 	start := time.Now().Add(-time.Duration(window) * time.Second)
 	result := map[string][]MetricPoint{}
 	for _, metricName := range []string{"cpu", "memory", "disk", "net_up", "net_down"} {
-		points, err := queryHistory(metricName, start)
+		points, err := queryHistory(hostID, metricName, start)
 		if err != nil {
 			continue
 		}
@@ -214,12 +360,19 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 
 func handleProcesses(w http.ResponseWriter, r *http.Request) {
 	setNoCache(w)
-	stateMu.RLock()
-	processes := append([]ProcessInfo(nil), stateProcesses...)
-	stateMu.RUnlock()
+	hostID := r.URL.Query().Get("hostId")
+	if hostID == "" {
+		http.Error(w, "hostId is required", http.StatusBadRequest)
+		return
+	}
+	state, ok := loadHostState(hostID)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string][]ProcessInfo{"processes": processes})
+	json.NewEncoder(w).Encode(map[string][]ProcessInfo{"processes": append([]ProcessInfo(nil), state.Processes...)})
 }
 
 func saveMetrics(report Report) error {
@@ -241,7 +394,7 @@ func saveMetrics(report Report) error {
 	}
 
 	for _, item := range metrics {
-		if _, err := stateDB.Exec(`INSERT INTO metrics (timestamp, name, value, unit) VALUES (?, ?, ?, ?)`, timestamp, item.name, item.value, item.unit); err != nil {
+		if _, err := stateDB.Exec(`INSERT INTO metrics (host_id, timestamp, name, value, unit) VALUES (?, ?, ?, ?, ?)`, report.HostID, timestamp, item.name, item.value, item.unit); err != nil {
 			return err
 		}
 	}
@@ -264,37 +417,70 @@ func evaluateAlerts(report Report) error {
 		{key: "disk", expr: report.Disk >= 90, level: "critical", message: "Disk usage exceeds 90%"},
 	}
 
+	triggered := make([]struct {
+		key     string
+		level   string
+		message string
+	}, 0, len(rules))
+
+	alertMu.Lock()
+	if _, ok := stateAlertMap[report.HostID]; !ok {
+		stateAlertMap[report.HostID] = map[string]bool{}
+	}
+
 	for _, rule := range rules {
+		current, exists := stateAlertMap[report.HostID][rule.key]
 		if rule.expr {
-			if !stateAlertMap[rule.key] {
-				if _, err := stateDB.Exec(`INSERT INTO alerts (rule_name, level, message, timestamp) VALUES (?, ?, ?, ?)`, rule.key, rule.level, rule.message, time.Now().UTC().Format(time.RFC3339)); err != nil {
-					return err
-				}
-				stateAlertMap[rule.key] = true
+			if !exists || !current {
+				stateAlertMap[report.HostID][rule.key] = true
+				triggered = append(triggered, struct {
+					key     string
+					level   string
+					message string
+				}{key: rule.key, level: rule.level, message: rule.message})
 			}
 		} else {
-			stateAlertMap[rule.key] = false
+			if exists && current {
+				stateAlertMap[report.HostID][rule.key] = false
+			}
+		}
+	}
+	alertMu.Unlock()
+
+	for _, alert := range triggered {
+		if _, err := stateDB.Exec(`INSERT INTO alerts (host_id, rule_name, level, message, timestamp) VALUES (?, ?, ?, ?, ?)`, report.HostID, alert.key, alert.level, alert.message, time.Now().UTC().Format(time.RFC3339)); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func currentAlerts(report Report) []AlertRecord {
-	alerts := []AlertRecord{}
-	if report.CPU >= 90 {
-		alerts = append(alerts, AlertRecord{RuleName: "cpu", Level: "warning", Message: "CPU usage exceeds 90%", Timestamp: time.Now().UTC().Format(time.RFC3339)})
+func getRecentAlerts(hostID string) []AlertRecord {
+	if stateDB == nil {
+		return nil
 	}
-	if report.Memory >= 85 {
-		alerts = append(alerts, AlertRecord{RuleName: "memory", Level: "warning", Message: "Memory usage exceeds 85%", Timestamp: time.Now().UTC().Format(time.RFC3339)})
+	rows, err := stateDB.Query(`SELECT rule_name, level, message, timestamp FROM alerts WHERE host_id = ? ORDER BY id DESC LIMIT 20`, hostID)
+	if err != nil {
+		return nil
 	}
-	if report.Disk >= 90 {
-		alerts = append(alerts, AlertRecord{RuleName: "disk", Level: "critical", Message: "Disk usage exceeds 90%", Timestamp: time.Now().UTC().Format(time.RFC3339)})
+	defer rows.Close()
+
+	result := []AlertRecord{}
+	for rows.Next() {
+		var ruleName, level, message, ts string
+		if err := rows.Scan(&ruleName, &level, &message, &ts); err != nil {
+			continue
+		}
+		result = append(result, AlertRecord{RuleName: ruleName, Level: level, Message: message, Timestamp: ts})
 	}
-	return alerts
+	return result
 }
 
-func queryHistory(metricName string, start time.Time) ([]MetricPoint, error) {
-	rows, err := stateDB.Query(`SELECT timestamp, value FROM metrics WHERE name = ? AND datetime(timestamp) >= datetime(?) ORDER BY timestamp ASC`, metricName, start.Format(time.RFC3339))
+func queryHistory(hostID, metricName string, start time.Time) ([]MetricPoint, error) {
+	if stateDB == nil {
+		return nil, nil
+	}
+	rows, err := stateDB.Query(`SELECT timestamp, value FROM metrics WHERE host_id = ? AND name = ? AND datetime(timestamp) >= datetime(?) ORDER BY timestamp ASC`, hostID, metricName, start.Format(time.RFC3339))
 	if err != nil {
 		return nil, err
 	}
@@ -312,14 +498,14 @@ func queryHistory(metricName string, start time.Time) ([]MetricPoint, error) {
 	return result, nil
 }
 
-func getLatestMetrics() (map[string]float64, error) {
+func getLatestMetricsForHost(hostID string) (map[string]float64, error) {
 	result := map[string]float64{"cpu": 0, "memory": 0, "disk": 0, "net_up": 0, "net_down": 0}
 	if stateDB == nil {
 		return result, nil
 	}
 
 	for _, name := range []string{"cpu", "memory", "disk", "net_up", "net_down"} {
-		row := stateDB.QueryRow(`SELECT value FROM metrics WHERE name = ? ORDER BY id DESC LIMIT 1`, name)
+		row := stateDB.QueryRow(`SELECT value FROM metrics WHERE host_id = ? AND name = ? ORDER BY id DESC LIMIT 1`, hostID, name)
 		var value float64
 		if err := row.Scan(&value); err != nil {
 			continue
@@ -330,5 +516,6 @@ func getLatestMetrics() (map[string]float64, error) {
 }
 
 func init() {
-	stateAlertMap = map[string]bool{}
+	hostStates = map[string]*HostRuntimeState{}
+	stateAlertMap = map[string]map[string]bool{}
 }

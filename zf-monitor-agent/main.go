@@ -32,6 +32,7 @@ type ProcessInfo struct {
 }
 
 type Report struct {
+	HostID    string        `json:"hostId"`
 	Hostname  string        `json:"hostname"`
 	Timestamp int64         `json:"timestamp"`
 	CPU       float64       `json:"cpu"`
@@ -42,7 +43,7 @@ type Report struct {
 	Processes []ProcessInfo `json:"processes"`
 }
 
-type agentService struct{}
+const defaultServerURL = "http://172.16.176.202:8080"
 
 var (
 	netLastSent uint64
@@ -66,6 +67,8 @@ func main() {
 
 	runAgentLoop(nil)
 }
+
+type agentService struct{}
 
 func (m *agentService) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
 	changes <- svc.Status{State: svc.StartPending}
@@ -105,7 +108,7 @@ func runAgentLoop(stopCh <-chan struct{}) {
 	if err != nil {
 		hostname = "unknown-host"
 	}
-
+	hostID := hostname
 	for {
 		select {
 		case <-stopCh:
@@ -114,11 +117,11 @@ func runAgentLoop(stopCh <-chan struct{}) {
 		default:
 		}
 
-		report, err := collectReport(hostname)
+		report, err := collectReport(hostname, hostID)
 		if err != nil {
 			log.Printf("collect report failed: %v", err)
 		} else {
-			if err := sendReport(report); err != nil {
+			if err := sendReport(report, defaultServerURL); err != nil {
 				log.Printf("send report failed: %v", err)
 			} else {
 				log.Printf("report sent host=%s cpu=%.1f memory=%.1f", report.Hostname, report.CPU, report.Memory)
@@ -134,8 +137,9 @@ func runAgentLoop(stopCh <-chan struct{}) {
 	}
 }
 
-func collectReport(hostname string) (Report, error) {
+func collectReport(hostname, hostID string) (Report, error) {
 	report := Report{
+		HostID:    hostID,
 		Hostname:  hostname,
 		Timestamp: time.Now().Unix(),
 	}
@@ -243,14 +247,14 @@ func collectNetworkRate() (float64, float64) {
 	return up, down
 }
 
-func sendReport(report Report) error {
+func sendReport(report Report, serverURL string) error {
 	payload, err := json.Marshal(report)
 	if err != nil {
 		return err
 	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Post("http://172.16.176.202:8080/api/report", "application/json", bytes.NewReader(payload))
+	resp, err := client.Post(serverURL+"/api/report", "application/json", bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
