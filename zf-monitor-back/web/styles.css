@@ -159,11 +159,6 @@ body {
   margin-bottom: 6px;
 }
 
-.host-display-icon {
-  font-size: 18px;
-  opacity: 0.85;
-}
-
 .host-name {
   font-size: clamp(1.4rem, 2vw, 2rem);
   font-weight: 700;
