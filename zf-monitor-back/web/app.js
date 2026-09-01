@@ -12,6 +12,10 @@ const els = {
   hostStatusText: document.getElementById('host-status-text'),
   hostStatusPill: document.getElementById('host-status-pill'),
   hostLastSeen: document.getElementById('host-last-seen'),
+  overviewTotalHosts: document.getElementById('overview-total-hosts'),
+  overviewOnlineHosts: document.getElementById('overview-online-hosts'),
+  overviewOfflineHosts: document.getElementById('overview-offline-hosts'),
+  overviewHostTableBody: document.getElementById('overview-host-table-body'),
   pageError: document.getElementById('page-error'),
   historyWindow: document.getElementById('history-window'),
   cpuChart: document.getElementById('cpu-chart'),
@@ -59,6 +63,12 @@ function switchPage(pageName) {
     return;
   }
 
+  if (pageName === 'overview') {
+    document.getElementById('overview-page').classList.remove('hidden');
+    loadOverview();
+    return;
+  }
+
   const targetPage = document.getElementById(`${pageName}-page`);
   if (targetPage) {
     targetPage.classList.remove('hidden');
@@ -67,6 +77,28 @@ function switchPage(pageName) {
 
 function normalizeHostId(hostId) {
   return (hostId || '').trim();
+}
+
+function formatRelativeTime(timestamp) {
+  if (!timestamp) {
+    return '-';
+  }
+
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000));
+  if (!Number.isFinite(elapsedSeconds)) {
+    return '-';
+  }
+  if (elapsedSeconds < 60) {
+    return `${elapsedSeconds} sec ago`;
+  }
+
+  const elapsedMinutes = Math.floor(elapsedSeconds / 60);
+  if (elapsedMinutes < 60) {
+    return `${elapsedMinutes} min ago`;
+  }
+
+  const elapsedHours = Math.floor(elapsedMinutes / 60);
+  return `${elapsedHours} hour${elapsedHours === 1 ? '' : 's'} ago`;
 }
 
 function updateQueryHost(hostId) {
@@ -142,6 +174,101 @@ function renderHostOptions() {
     state.selectedHostId = state.hosts[0].hostId;
     els.hostSelect.value = state.selectedHostId;
     updateQueryHost(state.selectedHostId);
+  }
+}
+
+function renderOverviewRows(hosts, summaries) {
+  els.overviewHostTableBody.innerHTML = '';
+
+  if (!hosts.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 6;
+    cell.className = 'overview-empty-state';
+    cell.textContent = 'No monitored hosts available. Waiting for monitoring agents...';
+    row.appendChild(cell);
+    els.overviewHostTableBody.appendChild(row);
+    return;
+  }
+
+  hosts.forEach((host, index) => {
+    const summary = summaries[index];
+    const row = document.createElement('tr');
+    const hostnameCell = document.createElement('td');
+    const hostLink = document.createElement('button');
+    hostLink.type = 'button';
+    hostLink.className = 'overview-host-link';
+    hostLink.textContent = host.hostname || host.hostId || '-';
+    hostLink.addEventListener('click', () => {
+      state.selectedHostId = normalizeHostId(host.hostId);
+      updateQueryHost(state.selectedHostId);
+      switchPage('hosts');
+      loadHosts();
+    });
+    hostnameCell.appendChild(hostLink);
+    row.appendChild(hostnameCell);
+
+    const statusCell = document.createElement('td');
+    const isOnline = String(host.status || '').toLowerCase() === 'online';
+    statusCell.innerHTML = `<span class="overview-status ${isOnline ? 'online' : 'offline'}"><span class="status-dot"></span>${isOnline ? 'Online' : 'Offline'}</span>`;
+    row.appendChild(statusCell);
+
+    [summary && summary.cpu, summary && summary.memory, summary && summary.disk].forEach((value) => {
+      const cell = document.createElement('td');
+      cell.textContent = value !== null && value !== undefined && Number.isFinite(Number(value))
+        ? formatPercent(Number(value))
+        : '-';
+      row.appendChild(cell);
+    });
+
+    const lastSeenCell = document.createElement('td');
+    lastSeenCell.textContent = formatRelativeTime((summary && summary.lastSeen) || host.lastSeen);
+    row.appendChild(lastSeenCell);
+    els.overviewHostTableBody.appendChild(row);
+  });
+}
+
+async function loadOverview() {
+  if (state.activePage !== 'overview') {
+    return;
+  }
+
+  try {
+    const hostsResponse = await fetch('/api/hosts', { cache: 'no-store' });
+    if (!hostsResponse.ok) {
+      throw new Error('Failed to load host overview');
+    }
+
+    const hosts = await hostsResponse.json();
+    const overviewHosts = Array.isArray(hosts) ? hosts : [];
+    const onlineCount = overviewHosts.filter((host) => String(host.status || '').toLowerCase() === 'online').length;
+    els.overviewTotalHosts.textContent = overviewHosts.length;
+    els.overviewOnlineHosts.textContent = onlineCount;
+    els.overviewOfflineHosts.textContent = overviewHosts.length - onlineCount;
+
+    const summaryResults = await Promise.allSettled(overviewHosts.map((host) =>
+      fetch(`/api/summary?hostId=${encodeURIComponent(host.hostId)}`, { cache: 'no-store' }).then((res) => {
+        if (!res.ok) {
+          throw new Error(`Summary failed for ${host.hostId}`);
+        }
+        return res.json();
+      })
+    ));
+    const summaries = summaryResults.map((result) => result.status === 'fulfilled' ? result.value : null);
+    renderOverviewRows(overviewHosts, summaries);
+  } catch (err) {
+    console.error('overview fetch failed', err);
+    els.overviewTotalHosts.textContent = '0';
+    els.overviewOnlineHosts.textContent = '0';
+    els.overviewOfflineHosts.textContent = '0';
+    els.overviewHostTableBody.innerHTML = '';
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 6;
+    cell.className = 'overview-empty-state';
+    cell.textContent = 'Unable to load host overview.';
+    row.appendChild(cell);
+    els.overviewHostTableBody.appendChild(row);
   }
 }
 
@@ -460,6 +587,11 @@ window.addEventListener('load', () => {
       refreshSelectedHostData();
     }
   }, 5000);
+  setInterval(() => {
+    if (state.activePage === 'overview') {
+      loadOverview();
+    }
+  }, 10000);
 });
 
 setNoDataView();

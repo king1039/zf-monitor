@@ -125,10 +125,46 @@
           </section>
         </section>
 
-        <section id="overview-page" class="page-view development-page hidden">
-          <h2>Overview</h2>
-          <p>This feature is under development.</p>
-          <p>More functionality will be available in a future release.</p>
+        <section id="overview-page" class="page-view overview-page hidden">
+          <div class="overview-header">
+            <h1>Overview</h1>
+          </div>
+
+          <section class="overview-stats" aria-label="Host summary">
+            <article class="overview-stat-card">
+              <span class="overview-stat-label">Total Hosts</span>
+              <strong id="overview-total-hosts">0</strong>
+            </article>
+            <article class="overview-stat-card">
+              <span class="overview-stat-label">Online</span>
+              <strong id="overview-online-hosts">0</strong>
+            </article>
+            <article class="overview-stat-card">
+              <span class="overview-stat-label">Offline</span>
+              <strong id="overview-offline-hosts">0</strong>
+            </article>
+          </section>
+
+          <article class="overview-host-panel">
+            <div class="panel-head">
+              <h2>Monitored Hosts</h2>
+            </div>
+            <div class="overview-table-wrap">
+              <table class="overview-host-table">
+                <thead>
+                  <tr>
+                    <th>Hostname</th>
+                    <th>Status</th>
+                    <th>CPU</th>
+                    <th>Memory</th>
+                    <th>Disk</th>
+                    <th>Last Seen</th>
+                  </tr>
+                </thead>
+                <tbody id="overview-host-table-body"></tbody>
+              </table>
+            </div>
+          </article>
         </section>
 
         <section id="database-page" class="page-view development-page hidden">
