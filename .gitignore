@@ -2,6 +2,8 @@
 *.exe
 *.out
 *.log
+zf-monitor-back/zf-monitor-back
+zf-monitor-agent/*.exe
 
 # OS files
 .DS_Store
