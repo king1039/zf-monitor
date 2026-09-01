@@ -116,16 +116,19 @@ body {
 }
 
 .host-selector-block {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   margin-top: 8px;
   margin-bottom: 16px;
 }
 
 .host-selector-block label {
-  display: block;
-  margin-bottom: 8px;
+  margin-bottom: 0;
   font-size: 15px;
   color: #334155;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .host-select {
@@ -680,6 +683,11 @@ body {
 @media (max-width: 560px) {
   .metric-grid {
     grid-template-columns: 1fr;
+  }
+
+  .host-selector-block {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .host-name-row {
