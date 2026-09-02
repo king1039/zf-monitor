@@ -517,10 +517,13 @@ body {
 
 .process-table th,
 .process-table td {
+  width: 25%;
   padding: 10px 8px;
   text-align: left;
   border-bottom: 1px solid var(--line);
   font-size: 13px;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .process-table th {
@@ -530,12 +533,6 @@ body {
 
 .process-table tbody tr:last-child td {
   border-bottom: none;
-}
-
-.process-table td:nth-child(2),
-.process-table td:nth-child(3),
-.process-table td:nth-child(4) {
-  text-align: right;
 }
 
 .alert-card {
