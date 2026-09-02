@@ -166,10 +166,106 @@
           </article>
         </section>
 
-        <section id="database-page" class="page-view development-page hidden">
-          <h2>Database</h2>
-          <p>This feature is under development.</p>
-          <p>More functionality will be available in a future release.</p>
+        <section id="database-page" class="page-view database-page hidden">
+          <div class="database-header">
+            <h1>Database Monitoring</h1>
+          </div>
+
+          <section class="database-selector-block">
+            <label for="database-select">Select Database</label>
+            <select id="database-select" class="host-select database-select" aria-label="Select Database"></select>
+          </section>
+
+          <div id="database-page-error" class="page-error hidden">Unable to load database monitoring data</div>
+
+          <section class="database-summary">
+            <div class="database-name-row">
+              <span id="database-name" class="database-name">Waiting for database controller...</span>
+              <span id="database-status-pill" class="database-status-pill offline">
+                <span class="status-dot"></span>
+                <span id="database-status-text">Offline</span>
+              </span>
+            </div>
+
+            <div class="database-meta-grid">
+              <div class="database-meta-row">
+                <span class="database-meta-label">Server:</span>
+                <span id="database-server-name" class="database-meta-value">-</span>
+              </div>
+              <div class="database-meta-row">
+                <span class="database-meta-label">Address:</span>
+                <span id="database-address" class="database-meta-value">-</span>
+              </div>
+              <div class="database-meta-row">
+                <span class="database-meta-label">Version:</span>
+                <span id="database-version" class="database-meta-value">-</span>
+              </div>
+              <div class="database-meta-row">
+                <span class="database-meta-label">Edition:</span>
+                <span id="database-edition" class="database-meta-value">-</span>
+              </div>
+              <div class="database-meta-row">
+                <span class="database-meta-label">Last Seen:</span>
+                <span id="database-last-seen" class="database-meta-value">-</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="database-metric-grid">
+            <article class="database-metric-card">
+              <div class="database-card-label">Uptime</div>
+              <div id="database-uptime" class="database-card-value">-</div>
+            </article>
+            <article class="database-metric-card">
+              <div class="database-card-label">Connections</div>
+              <div id="database-connections" class="database-card-value">-</div>
+            </article>
+            <article class="database-metric-card">
+              <div class="database-card-label">Active Sessions</div>
+              <div id="database-active-sessions" class="database-card-value">-</div>
+            </article>
+            <article class="database-metric-card">
+              <div class="database-card-label">Running Requests</div>
+              <div id="database-running-requests" class="database-card-value">-</div>
+            </article>
+            <article class="database-metric-card">
+              <div class="database-card-label">Max Connections</div>
+              <div id="database-max-connections" class="database-card-value">-</div>
+            </article>
+            <article class="database-metric-card">
+              <div class="database-card-label">Databases</div>
+              <div id="database-databases" class="database-card-value">-</div>
+            </article>
+            <article class="database-metric-card">
+              <div class="database-card-label">Database Size</div>
+              <div id="database-size" class="database-card-value">-</div>
+            </article>
+            <article class="database-metric-card">
+              <div class="database-card-label">Port</div>
+              <div id="database-port" class="database-card-value">-</div>
+            </article>
+          </section>
+
+          <article class="panel database-panel">
+            <div class="panel-head">
+              <h2>Monitored Database Instances</h2>
+            </div>
+            <div class="overview-table-wrap database-table-wrap">
+              <table class="database-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Server</th>
+                    <th>Address</th>
+                    <th>Status</th>
+                    <th>Last Seen</th>
+                  </tr>
+                </thead>
+                <tbody id="database-instance-table-body"></tbody>
+              </table>
+            </div>
+          </article>
         </section>
 
         <section id="alerts-page" class="page-view development-page hidden">

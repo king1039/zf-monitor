@@ -4,6 +4,8 @@ const state = {
   historyWindow: '3600',
   requestToken: 0,
   activePage: 'hosts',
+  selectedDatabaseId: '',
+  databaseList: [],
 };
 
 const els = {
@@ -30,16 +32,55 @@ const els = {
   cpuProgress: document.getElementById('cpu-progress'),
   memoryProgress: document.getElementById('memory-progress'),
   diskProgress: document.getElementById('disk-progress'),
+  databaseSelect: document.getElementById('database-select'),
+  databaseName: document.getElementById('database-name'),
+  databaseStatusPill: document.getElementById('database-status-pill'),
+  databaseStatusText: document.getElementById('database-status-text'),
+  databaseServerName: document.getElementById('database-server-name'),
+  databaseAddress: document.getElementById('database-address'),
+  databaseVersion: document.getElementById('database-version'),
+  databaseEdition: document.getElementById('database-edition'),
+  databaseLastSeen: document.getElementById('database-last-seen'),
+  databasePageError: document.getElementById('database-page-error'),
+  databaseUptime: document.getElementById('database-uptime'),
+  databaseConnections: document.getElementById('database-connections'),
+  databaseActiveSessions: document.getElementById('database-active-sessions'),
+  databaseRunningRequests: document.getElementById('database-running-requests'),
+  databaseMaxConnections: document.getElementById('database-max-connections'),
+  databaseDatabases: document.getElementById('database-databases'),
+  databaseSize: document.getElementById('database-size'),
+  databasePort: document.getElementById('database-port'),
+  databaseInstanceTableBody: document.getElementById('database-instance-table-body'),
 };
 
 function setPageError(message) {
-  els.pageError.textContent = message;
-  els.pageError.classList.remove('hidden');
+  if (els.pageError) {
+    els.pageError.textContent = message;
+    els.pageError.classList.remove('hidden');
+  }
 }
 
 function clearPageError() {
-  els.pageError.textContent = '';
-  els.pageError.classList.add('hidden');
+  if (els.pageError) {
+    els.pageError.textContent = '';
+    els.pageError.classList.add('hidden');
+  }
+}
+
+function setDatabaseError(message) {
+  if (!els.databasePageError) {
+    return;
+  }
+  els.databasePageError.textContent = message;
+  els.databasePageError.classList.remove('hidden');
+}
+
+function clearDatabaseError() {
+  if (!els.databasePageError) {
+    return;
+  }
+  els.databasePageError.textContent = '';
+  els.databasePageError.classList.add('hidden');
 }
 
 function switchPage(pageName) {
@@ -66,6 +107,12 @@ function switchPage(pageName) {
   if (pageName === 'overview') {
     document.getElementById('overview-page').classList.remove('hidden');
     loadOverview();
+    return;
+  }
+
+  if (pageName === 'database') {
+    document.getElementById('database-page').classList.remove('hidden');
+    loadDatabases();
     return;
   }
 
@@ -178,6 +225,10 @@ function renderHostOptions() {
 }
 
 function renderOverviewRows(hosts, summaries) {
+  if (!els.overviewHostTableBody) {
+    return;
+  }
+
   els.overviewHostTableBody.innerHTML = '';
 
   if (!hosts.length) {
@@ -242,9 +293,11 @@ async function loadOverview() {
     const hosts = await hostsResponse.json();
     const overviewHosts = Array.isArray(hosts) ? hosts : [];
     const onlineCount = overviewHosts.filter((host) => String(host.status || '').toLowerCase() === 'online').length;
-    els.overviewTotalHosts.textContent = overviewHosts.length;
-    els.overviewOnlineHosts.textContent = onlineCount;
-    els.overviewOfflineHosts.textContent = overviewHosts.length - onlineCount;
+    if (els.overviewTotalHosts) {
+      els.overviewTotalHosts.textContent = overviewHosts.length;
+      els.overviewOnlineHosts.textContent = onlineCount;
+      els.overviewOfflineHosts.textContent = overviewHosts.length - onlineCount;
+    }
 
     const summaryResults = await Promise.allSettled(overviewHosts.map((host) =>
       fetch(`/api/summary?hostId=${encodeURIComponent(host.hostId)}`, { cache: 'no-store' }).then((res) => {
@@ -258,38 +311,70 @@ async function loadOverview() {
     renderOverviewRows(overviewHosts, summaries);
   } catch (err) {
     console.error('overview fetch failed', err);
-    els.overviewTotalHosts.textContent = '0';
-    els.overviewOnlineHosts.textContent = '0';
-    els.overviewOfflineHosts.textContent = '0';
-    els.overviewHostTableBody.innerHTML = '';
-    const row = document.createElement('tr');
-    const cell = document.createElement('td');
-    cell.colSpan = 6;
-    cell.className = 'overview-empty-state';
-    cell.textContent = 'Unable to load host overview.';
-    row.appendChild(cell);
-    els.overviewHostTableBody.appendChild(row);
+    if (els.overviewTotalHosts) {
+      els.overviewTotalHosts.textContent = '0';
+      els.overviewOnlineHosts.textContent = '0';
+      els.overviewOfflineHosts.textContent = '0';
+    }
+    if (els.overviewHostTableBody) {
+      els.overviewHostTableBody.innerHTML = '';
+      const row = document.createElement('tr');
+      const cell = document.createElement('td');
+      cell.colSpan = 6;
+      cell.className = 'overview-empty-state';
+      cell.textContent = 'Unable to load host overview.';
+      row.appendChild(cell);
+      els.overviewHostTableBody.appendChild(row);
+    }
   }
 }
 
 function setNoDataView() {
-  els.hostName.textContent = 'Waiting for monitoring agents...';
-  els.hostStatusText.textContent = 'Offline';
-  els.hostStatusPill.className = 'host-status-pill offline';
-  els.hostLastSeen.textContent = 'Last Seen: -';
+  if (els.hostName) {
+    els.hostName.textContent = 'Waiting for monitoring agents...';
+  }
+  if (els.hostStatusText) {
+    els.hostStatusText.textContent = 'Offline';
+  }
+  if (els.hostStatusPill) {
+    els.hostStatusPill.className = 'host-status-pill offline';
+  }
+  if (els.hostLastSeen) {
+    els.hostLastSeen.textContent = 'Last Seen: -';
+  }
 
-  els.cpuValue.textContent = '0.0%';
-  els.memoryValue.textContent = '0.0%';
-  els.diskValue.textContent = '0.0%';
-  els.networkValue.textContent = '';
-  els.networkUp.textContent = '0.0 KB/s Up';
-  els.networkDown.textContent = '0.0 KB/s Down';
+  if (els.cpuValue) {
+    els.cpuValue.textContent = '0.0%';
+  }
+  if (els.memoryValue) {
+    els.memoryValue.textContent = '0.0%';
+  }
+  if (els.diskValue) {
+    els.diskValue.textContent = '0.0%';
+  }
+  if (els.networkValue) {
+    els.networkValue.textContent = '';
+  }
+  if (els.networkUp) {
+    els.networkUp.textContent = '0.0 KB/s Up';
+  }
+  if (els.networkDown) {
+    els.networkDown.textContent = '0.0 KB/s Down';
+  }
 
-  els.cpuProgress.style.width = '0%';
-  els.memoryProgress.style.width = '0%';
-  els.diskProgress.style.width = '0%';
+  if (els.cpuProgress) {
+    els.cpuProgress.style.width = '0%';
+  }
+  if (els.memoryProgress) {
+    els.memoryProgress.style.width = '0%';
+  }
+  if (els.diskProgress) {
+    els.diskProgress.style.width = '0%';
+  }
 
-  clearHistoryChart();
+  if (els.cpuChart) {
+    clearHistoryChart();
+  }
   renderProcesses({ processes: [] });
   renderAlerts([]);
 }
@@ -337,10 +422,18 @@ function updateHostStatusUI(summary) {
   const isOnline = status === 'online';
   const hostName = summary.hostname || state.selectedHostId || 'Unknown host';
 
-  els.hostName.textContent = hostName;
-  els.hostStatusText.textContent = isOnline ? 'Online' : 'Offline';
-  els.hostStatusPill.className = 'host-status-pill ' + (isOnline ? 'online' : 'offline');
-  els.hostLastSeen.textContent = summary.lastSeen ? `Last Seen: ${summary.lastSeen}` : 'Last Seen: -';
+  if (els.hostName) {
+    els.hostName.textContent = hostName;
+  }
+  if (els.hostStatusText) {
+    els.hostStatusText.textContent = isOnline ? 'Online' : 'Offline';
+  }
+  if (els.hostStatusPill) {
+    els.hostStatusPill.className = 'host-status-pill ' + (isOnline ? 'online' : 'offline');
+  }
+  if (els.hostLastSeen) {
+    els.hostLastSeen.textContent = summary.lastSeen ? `Last Seen: ${summary.lastSeen}` : 'Last Seen: -';
+  }
 }
 
 function renderMetrics(summary) {
@@ -350,16 +443,34 @@ function renderMetrics(summary) {
   const netUp = Number(summary.netUp || 0);
   const netDown = Number(summary.netDown || 0);
 
-  els.cpuValue.textContent = formatPercent(cpu);
-  els.memoryValue.textContent = formatPercent(memory);
-  els.diskValue.textContent = formatPercent(disk);
-  els.networkValue.textContent = '';
-  els.networkUp.textContent = `${formatKbps(netUp)} KB/s Up`;
-  els.networkDown.textContent = `${formatKbps(netDown)} KB/s Down`;
+  if (els.cpuValue) {
+    els.cpuValue.textContent = formatPercent(cpu);
+  }
+  if (els.memoryValue) {
+    els.memoryValue.textContent = formatPercent(memory);
+  }
+  if (els.diskValue) {
+    els.diskValue.textContent = formatPercent(disk);
+  }
+  if (els.networkValue) {
+    els.networkValue.textContent = '';
+  }
+  if (els.networkUp) {
+    els.networkUp.textContent = `${formatKbps(netUp)} KB/s Up`;
+  }
+  if (els.networkDown) {
+    els.networkDown.textContent = `${formatKbps(netDown)} KB/s Down`;
+  }
 
-  els.cpuProgress.style.width = `${Math.min(Math.max(cpu, 0), 100)}%`;
-  els.memoryProgress.style.width = `${Math.min(Math.max(memory, 0), 100)}%`;
-  els.diskProgress.style.width = `${Math.min(Math.max(disk, 0), 100)}%`;
+  if (els.cpuProgress) {
+    els.cpuProgress.style.width = `${Math.min(Math.max(cpu, 0), 100)}%`;
+  }
+  if (els.memoryProgress) {
+    els.memoryProgress.style.width = `${Math.min(Math.max(memory, 0), 100)}%`;
+  }
+  if (els.diskProgress) {
+    els.diskProgress.style.width = `${Math.min(Math.max(disk, 0), 100)}%`;
+  }
 }
 
 function drawHistoryChart(points, color) {
@@ -387,12 +498,10 @@ function drawHistoryChart(points, color) {
     return;
   }
 
-  const values = points.map((item) => Number(item.value || 0));
   const min = 0;
   const max = 100;
 
-  const lineColors = ['#2563eb'];
-  ctx.strokeStyle = lineColors[0];
+  ctx.strokeStyle = color;
   ctx.lineWidth = 2;
   ctx.beginPath();
 
@@ -426,8 +535,6 @@ function drawHistoryChart(points, color) {
     ctx.fillStyle = '#64748b';
     ctx.fillText(label, x - 12, y + 16);
   });
-
-  ctx.strokeStyle = color;
 }
 
 function clearHistoryChart() {
@@ -447,6 +554,10 @@ function renderHistory(data) {
 }
 
 function renderProcesses(payload) {
+  if (!els.processTableBody) {
+    return;
+  }
+
   const processes = Array.isArray(payload && payload.processes) ? payload.processes : [];
   els.processTableBody.innerHTML = '';
 
@@ -475,6 +586,10 @@ function renderProcesses(payload) {
 }
 
 function renderAlerts(alerts) {
+  if (!els.alertList) {
+    return;
+  }
+
   els.alertList.innerHTML = '';
 
   if (!Array.isArray(alerts) || alerts.length === 0) {
@@ -553,16 +668,321 @@ async function refreshSelectedHostData() {
   }
 }
 
-els.hostSelect.addEventListener('change', (event) => {
-  updateHostSelection(event.target.value);
-});
+function hasValidNumber(value) {
+  return value !== null && value !== undefined && Number.isFinite(Number(value));
+}
 
-els.historyWindow.addEventListener('change', (event) => {
-  state.historyWindow = event.target.value;
-  if (state.selectedHostId) {
-    refreshSelectedHostData();
+function formatUptime(seconds) {
+  if (!hasValidNumber(seconds)) {
+    return '-';
   }
-});
+
+  const totalSeconds = Math.max(0, Math.floor(Number(seconds)));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const secs = totalSeconds % 60;
+
+  if (days > 0) {
+    return `${days}d ${hours}h`;
+  }
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${secs}s`;
+  }
+  return `${secs}s`;
+}
+
+function formatDatabaseSizeMB(value) {
+  if (!hasValidNumber(value)) {
+    return '-';
+  }
+  const mb = Number(value);
+  if (mb < 1024) {
+    return `${mb.toFixed(1)} MB`;
+  }
+  return `${(mb / 1024).toFixed(2)} GB`;
+}
+
+function formatIntegerValue(value) {
+  if (!hasValidNumber(value)) {
+    return '-';
+  }
+  const number = Number(value);
+  if (Number.isInteger(number)) {
+    return String(number);
+  }
+  return Number(number).toFixed(1);
+}
+
+function renderDatabaseSelection(instances) {
+  if (!els.databaseSelect) {
+    return;
+  }
+
+  els.databaseSelect.innerHTML = '';
+
+  if (!instances.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = 'No database instances available';
+    els.databaseSelect.appendChild(option);
+    els.databaseSelect.value = '';
+    return;
+  }
+
+  instances.forEach((instance) => {
+    const option = document.createElement('option');
+    option.value = instance.instanceId;
+    option.textContent = instance.name || instance.instanceId;
+    if (instance.instanceId === state.selectedDatabaseId) {
+      option.selected = true;
+    }
+    els.databaseSelect.appendChild(option);
+  });
+
+  if (state.selectedDatabaseId && instances.some((instance) => instance.instanceId === state.selectedDatabaseId)) {
+    els.databaseSelect.value = state.selectedDatabaseId;
+  } else {
+    state.selectedDatabaseId = instances[0].instanceId;
+    els.databaseSelect.value = state.selectedDatabaseId;
+  }
+}
+
+function renderDatabaseInstanceTable(instances) {
+  if (!els.databaseInstanceTableBody) {
+    return;
+  }
+
+  els.databaseInstanceTableBody.innerHTML = '';
+
+  if (!instances.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 6;
+    cell.textContent = 'Waiting for database controller...';
+    cell.className = 'database-empty-state';
+    row.appendChild(cell);
+    els.databaseInstanceTableBody.appendChild(row);
+    return;
+  }
+
+  instances.forEach((instance) => {
+    const row = document.createElement('tr');
+    row.className = 'database-instance-row';
+    if (instance.instanceId === state.selectedDatabaseId) {
+      row.classList.add('selected');
+    }
+    row.addEventListener('click', () => {
+      state.selectedDatabaseId = instance.instanceId;
+      renderDatabaseSelection(state.databaseList);
+      renderDatabaseInstanceTable(state.databaseList);
+      loadDatabaseSummary(instance.instanceId);
+    });
+
+    const cells = [
+      instance.name || '-',
+      instance.type || '-',
+      instance.serverName || instance.host || '-',
+      instance.host ? `${instance.host}:${instance.port || '-'}` : '-',
+      String(instance.status || 'offline').toLowerCase() === 'online' ? 'Online' : 'Offline',
+      formatRelativeTime(instance.lastSeen),
+    ];
+
+    cells.forEach((cellText) => {
+      const cell = document.createElement('td');
+      cell.textContent = cellText;
+      row.appendChild(cell);
+    });
+
+    els.databaseInstanceTableBody.appendChild(row);
+  });
+}
+
+function setNoDatabaseData() {
+  if (els.databaseName) {
+    els.databaseName.textContent = 'Waiting for database controller...';
+  }
+  if (els.databaseStatusText) {
+    els.databaseStatusText.textContent = 'Offline';
+  }
+  if (els.databaseStatusPill) {
+    els.databaseStatusPill.className = 'database-status-pill offline';
+  }
+  if (els.databaseServerName) {
+    els.databaseServerName.textContent = '-';
+  }
+  if (els.databaseAddress) {
+    els.databaseAddress.textContent = '-';
+  }
+  if (els.databaseVersion) {
+    els.databaseVersion.textContent = '-';
+  }
+  if (els.databaseEdition) {
+    els.databaseEdition.textContent = '-';
+  }
+  if (els.databaseLastSeen) {
+    els.databaseLastSeen.textContent = '-';
+  }
+
+  const emptyValues = [
+    els.databaseUptime,
+    els.databaseConnections,
+    els.databaseActiveSessions,
+    els.databaseRunningRequests,
+    els.databaseMaxConnections,
+    els.databaseDatabases,
+    els.databaseSize,
+    els.databasePort,
+  ];
+  emptyValues.forEach((element) => {
+    if (element) {
+      element.textContent = '-';
+    }
+  });
+}
+
+function renderDatabaseSummary(summary) {
+  const isOnline = String(summary.status || 'offline').toLowerCase() === 'online';
+
+  if (els.databaseName) {
+    els.databaseName.textContent = summary.name || summary.instanceId || 'Unknown database';
+  }
+  if (els.databaseStatusText) {
+    els.databaseStatusText.textContent = isOnline ? 'Online' : 'Offline';
+  }
+  if (els.databaseStatusPill) {
+    els.databaseStatusPill.className = `database-status-pill ${isOnline ? 'online' : 'offline'}`;
+  }
+  if (els.databaseServerName) {
+    els.databaseServerName.textContent = summary.serverName || '-';
+  }
+  if (els.databaseAddress) {
+    const hasHost = typeof summary.host === 'string' && summary.host.trim() !== '';
+    const hasPort = summary.port !== null && summary.port !== undefined && Number.isInteger(Number(summary.port));
+    els.databaseAddress.textContent = hasHost && hasPort ? `${summary.host}:${summary.port}` : '-';
+  }
+  if (els.databaseVersion) {
+    els.databaseVersion.textContent = summary.version || '-';
+  }
+  if (els.databaseEdition) {
+    els.databaseEdition.textContent = summary.edition || '-';
+  }
+  if (els.databaseLastSeen) {
+    els.databaseLastSeen.textContent = summary.lastSeen ? formatRelativeTime(summary.lastSeen) : '-';
+  }
+
+  if (els.databaseUptime) {
+    els.databaseUptime.textContent = hasValidNumber(summary.uptimeSeconds) ? formatUptime(summary.uptimeSeconds) : '-';
+  }
+  if (els.databaseConnections) {
+    els.databaseConnections.textContent = hasValidNumber(summary.connections) ? formatIntegerValue(summary.connections) : '0';
+  }
+  if (els.databaseActiveSessions) {
+    els.databaseActiveSessions.textContent = hasValidNumber(summary.activeSessions) ? formatIntegerValue(summary.activeSessions) : '0';
+  }
+  if (els.databaseRunningRequests) {
+    els.databaseRunningRequests.textContent = hasValidNumber(summary.runningRequests) ? formatIntegerValue(summary.runningRequests) : '0';
+  }
+  if (els.databaseMaxConnections) {
+    els.databaseMaxConnections.textContent = hasValidNumber(summary.maxConnections) ? formatIntegerValue(summary.maxConnections) : '0';
+  }
+  if (els.databaseDatabases) {
+    els.databaseDatabases.textContent = hasValidNumber(summary.databaseCount) ? formatIntegerValue(summary.databaseCount) : '0';
+  }
+  if (els.databaseSize) {
+    els.databaseSize.textContent = hasValidNumber(summary.totalDatabaseSizeMB) ? formatDatabaseSizeMB(summary.totalDatabaseSizeMB) : '0.0 MB';
+  }
+  if (els.databasePort) {
+    els.databasePort.textContent = summary.port !== null && summary.port !== undefined && Number.isInteger(Number(summary.port)) ? String(summary.port) : '-';
+  }
+}
+
+async function loadDatabases() {
+  if (!els.databaseSelect && !els.databaseInstanceTableBody) {
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/databases', { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error('Failed to load database list');
+    }
+
+    const instances = await response.json();
+    state.databaseList = Array.isArray(instances) ? instances : [];
+    renderDatabaseSelection(state.databaseList);
+    renderDatabaseInstanceTable(state.databaseList);
+
+    if (!state.databaseList.length) {
+      state.selectedDatabaseId = '';
+      clearDatabaseError();
+      setNoDatabaseData();
+      return;
+    }
+
+    if (!state.selectedDatabaseId || !state.databaseList.some((instance) => instance.instanceId === state.selectedDatabaseId)) {
+      state.selectedDatabaseId = state.databaseList[0].instanceId;
+      renderDatabaseSelection(state.databaseList);
+    }
+
+    clearDatabaseError();
+    await loadDatabaseSummary(state.selectedDatabaseId);
+  } catch (err) {
+    console.error('database list fetch failed', err);
+    setDatabaseError('Unable to load database monitoring data');
+    setNoDatabaseData();
+  }
+}
+
+async function loadDatabaseSummary(instanceId) {
+  if (!instanceId) {
+    setNoDatabaseData();
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/database/summary?instanceId=${encodeURIComponent(instanceId)}`, { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error('Failed to load database summary');
+    }
+
+    const summary = await response.json();
+    clearDatabaseError();
+    renderDatabaseSummary(summary);
+  } catch (err) {
+    console.error('database summary fetch failed', err);
+    setDatabaseError('Unable to load database monitoring data');
+    setNoDatabaseData();
+  }
+}
+
+if (els.databaseSelect) {
+  els.databaseSelect.addEventListener('change', (event) => {
+    state.selectedDatabaseId = event.target.value;
+    renderDatabaseInstanceTable(state.databaseList);
+    if (state.selectedDatabaseId) {
+      loadDatabaseSummary(state.selectedDatabaseId);
+    }
+  });
+}
+
+if (els.hostSelect) {
+  els.hostSelect.addEventListener('change', (event) => {
+    updateHostSelection(event.target.value);
+  });
+}
+
+if (els.historyWindow) {
+  els.historyWindow.addEventListener('change', (event) => {
+    state.historyWindow = event.target.value;
+    if (state.selectedHostId) {
+      refreshSelectedHostData();
+    }
+  });
+}
 
 document.querySelectorAll('.nav-item').forEach((button) => {
   button.addEventListener('click', () => {
@@ -592,6 +1012,14 @@ window.addEventListener('load', () => {
       loadOverview();
     }
   }, 10000);
+  setInterval(() => {
+    if (state.activePage === 'database') {
+      loadDatabases();
+    }
+  }, 10000);
 });
 
 setNoDataView();
+if (els.databasePageError) {
+  els.databasePageError.classList.add('hidden');
+}
