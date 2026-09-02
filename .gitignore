@@ -5,6 +5,10 @@
 zf-monitor-back/zf-monitor-back
 zf-monitor-agent/*.exe
 
+# DB Controller runtime
+zf-monitor-db-controller/config.yaml
+zf-monitor-db-controller/zf-monitor-db-controller
+
 # OS files
 .DS_Store
 Thumbs.db
