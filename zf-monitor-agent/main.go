@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"golang.org/x/sys/windows/svc"
+	"gopkg.in/yaml.v3"
 
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
@@ -43,7 +44,13 @@ type Report struct {
 	Processes []ProcessInfo `json:"processes"`
 }
 
-const defaultServerURL = "http://172.16.176.202:8080"
+const defaultBackendURL = "http://172.16.176.202:8080"
+
+type Config struct {
+	Backend struct {
+		URL string `yaml:"url"`
+	} `yaml:"backend"`
+}
 
 var (
 	netLastSent uint64
@@ -52,6 +59,11 @@ var (
 )
 
 func main() {
+	config, err := loadConfig()
+	if err != nil {
+		log.Fatalf("load config failed: %v", err)
+	}
+
 	isService, err := svc.IsWindowsService()
 	if err != nil {
 		log.Printf("svc.IsWindowsService() failed: %v", err)
@@ -59,16 +71,38 @@ func main() {
 	}
 
 	if isService {
-		if err := svc.Run(serviceName, &agentService{}); err != nil {
+		if err := svc.Run(serviceName, &agentService{serverURL: config.Backend.URL}); err != nil {
 			log.Fatalf("failed to run %s service: %v", serviceName, err)
 		}
 		return
 	}
 
-	runAgentLoop(nil)
+	runAgentLoop(nil, config.Backend.URL)
 }
 
-type agentService struct{}
+func loadConfig() (Config, error) {
+	data, err := os.ReadFile("config.yaml")
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Config{}, fmt.Errorf("config.yaml not found in current working directory")
+		}
+		return Config{}, fmt.Errorf("read config.yaml: %w", err)
+	}
+
+	var config Config
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return Config{}, fmt.Errorf("parse config.yaml: %w", err)
+	}
+	if config.Backend.URL == "" {
+		config.Backend.URL = defaultBackendURL
+	}
+
+	return config, nil
+}
+
+type agentService struct {
+	serverURL string
+}
 
 func (m *agentService) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
 	changes <- svc.Status{State: svc.StartPending}
@@ -77,7 +111,7 @@ func (m *agentService) Execute(args []string, r <-chan svc.ChangeRequest, change
 	doneCh := make(chan struct{})
 	go func() {
 		defer close(doneCh)
-		runAgentLoop(stopCh)
+		runAgentLoop(stopCh, m.serverURL)
 	}()
 
 	changes <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
@@ -103,7 +137,7 @@ func (m *agentService) Execute(args []string, r <-chan svc.ChangeRequest, change
 	}
 }
 
-func runAgentLoop(stopCh <-chan struct{}) {
+func runAgentLoop(stopCh <-chan struct{}, serverURL string) {
 	hostname, err := os.Hostname()
 	if err != nil {
 		hostname = "unknown-host"
@@ -121,7 +155,7 @@ func runAgentLoop(stopCh <-chan struct{}) {
 		if err != nil {
 			log.Printf("collect report failed: %v", err)
 		} else {
-			if err := sendReport(report, defaultServerURL); err != nil {
+			if err := sendReport(report, serverURL); err != nil {
 				log.Printf("send report failed: %v", err)
 			} else {
 				log.Printf("report sent host=%s cpu=%.1f memory=%.1f", report.Hostname, report.CPU, report.Memory)
