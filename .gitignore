@@ -4,6 +4,7 @@
 *.log
 zf-monitor-back/zf-monitor-back
 zf-monitor-agent/*.exe
+zf-monitor-agent/config.yaml
 
 # DB Controller runtime
 zf-monitor-db-controller/config.yaml
