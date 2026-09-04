@@ -1,0 +1,36 @@
+services:
+
+  zf-monitor-back:
+    image: zf-monitor-back:latest
+    container_name: zf-monitor-back
+
+    ports:
+      - "18080:8080"
+
+    volumes:
+      - /opt/zf-monitor-docker-data/backend:/app/data
+
+    networks:
+      - zf-network
+
+    restart: unless-stopped
+
+
+  zf-monitor-db-controller:
+    image: zf-monitor-db-controller:latest
+    container_name: zf-monitor-db-controller
+
+    volumes:
+      - /etc/zf-monitor/db-controller.yaml:/app/config.yaml:ro
+      - /opt/zf-monitor-docker-data/backend:/app/data
+
+    networks:
+      - zf-network
+
+    restart: unless-stopped
+
+
+networks:
+
+  zf-network:
+    external: true
