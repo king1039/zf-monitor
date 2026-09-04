@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"time"
 
@@ -81,17 +82,23 @@ func main() {
 }
 
 func loadConfig() (Config, error) {
-	data, err := os.ReadFile("config.yaml")
+	exePath, err := os.Executable()
+	if err != nil {
+		return Config{}, fmt.Errorf("get executable path: %w", err)
+	}
+
+	configPath := filepath.Join(filepath.Dir(exePath), "config.yaml")
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return Config{}, fmt.Errorf("config.yaml not found in current working directory")
+			return Config{}, fmt.Errorf("config file %q not found", configPath)
 		}
-		return Config{}, fmt.Errorf("read config.yaml: %w", err)
+		return Config{}, fmt.Errorf("read config file %q: %w", configPath, err)
 	}
 
 	var config Config
 	if err := yaml.Unmarshal(data, &config); err != nil {
-		return Config{}, fmt.Errorf("parse config.yaml: %w", err)
+		return Config{}, fmt.Errorf("parse config file %q: %w", configPath, err)
 	}
 	if config.Backend.URL == "" {
 		config.Backend.URL = defaultBackendURL
