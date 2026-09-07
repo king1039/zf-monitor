@@ -1,0 +1,58 @@
+name: Build Docker Images
+
+on:
+  push:
+    branches:
+      - feature/cicd
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-backend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./zf-monitor-back
+          push: true
+          tags: |
+            ghcr.io/king1039/zf-monitor-back:${{ github.sha }}
+            ghcr.io/king1039/zf-monitor-back:latest
+
+  build-db-controller:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push db-controller
+        uses: docker/build-push-action@v6
+        with:
+          context: ./zf-monitor-db-controller
+          push: true
+          tags: |
+            ghcr.io/king1039/zf-monitor-db-controller:${{ github.sha }}
+            ghcr.io/king1039/zf-monitor-db-controller:latest
