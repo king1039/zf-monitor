@@ -3,7 +3,7 @@ const state = {
   selectedHostId: '',
   historyWindow: '3600',
   requestToken: 0,
-  activePage: 'hosts',
+  activePage: 'overview',
   selectedDatabaseId: '',
   databaseList: [],
   alertStatus: '',
@@ -1524,8 +1524,8 @@ document.querySelectorAll('.nav-item').forEach((button) => {
 
 window.addEventListener('load', () => {
   loadPlatformBrand();
-  switchPage('hosts');
-  loadHosts();
+  switchPage('overview');
+  loadOverview();
   setInterval(() => {
     if (state.activePage === 'hosts') {
       loadHosts();

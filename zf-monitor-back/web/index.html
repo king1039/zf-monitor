@@ -15,8 +15,8 @@
         </div>
 
         <nav class="sidebar-nav" aria-label="Sidebar navigation">
-          <button type="button" class="nav-item" data-page="overview">Overview</button>
-          <button type="button" class="nav-item active" data-page="hosts">Hosts</button>
+          <button type="button" class="nav-item active" data-page="overview">Overview</button>
+          <button type="button" class="nav-item" data-page="hosts">Hosts</button>
           <button type="button" class="nav-item" data-page="database">Database</button>
           <button type="button" class="nav-item" data-page="alerts">Alerts</button>
           <button type="button" class="nav-item" data-page="settings">Settings</button>
@@ -26,7 +26,7 @@
       </aside>
 
       <main class="main-panel">
-        <section id="hosts-page" class="page-view">
+        <section id="hosts-page" class="page-view hidden">
           <section class="host-selector-block">
             <label for="host-select">Select Host</label>
             <select id="host-select" class="host-select" aria-label="Select Host"></select>
@@ -124,7 +124,7 @@
           </section>
         </section>
 
-        <section id="overview-page" class="page-view overview-page hidden">
+        <section id="overview-page" class="page-view overview-page">
           <div class="overview-header">
             <h1>Overview</h1>
           </div>
