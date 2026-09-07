@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/cicd
+      - feature/alert
   workflow_dispatch:
 
 permissions:
