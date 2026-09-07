@@ -1033,6 +1033,208 @@ body {
   color: #b91c1c;
 }
 
+.settings-page {
+  display: block;
+}
+
+.settings-header {
+  margin-bottom: 20px;
+}
+
+.settings-header h1 {
+  margin: 0;
+  font-size: clamp(1.75rem, 2vw, 2.3rem);
+}
+
+.settings-header p,
+.settings-section-header p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.settings-message {
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  background: var(--success-soft);
+  color: #166534;
+}
+
+.settings-message.error {
+  border-color: #fecaca;
+  background: var(--danger-soft);
+  color: #b91c1c;
+}
+
+.settings-section {
+  margin-bottom: 20px;
+  padding: 18px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.settings-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.settings-section-header h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.settings-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.settings-save-button,
+.settings-secondary-button {
+  border-radius: 7px;
+  padding: 9px 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-save-button {
+  border: 1px solid #bfdbfe;
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.settings-secondary-button {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: #334155;
+}
+
+.settings-save-button:disabled,
+.settings-secondary-button:disabled {
+  cursor: wait;
+  opacity: .6;
+}
+
+.settings-rule-grid {
+  display: grid;
+  gap: 0;
+}
+
+.settings-rule-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr 1fr;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-rule-row:last-child {
+  border-bottom: 0;
+}
+
+.settings-rule-heading {
+  padding-top: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-section input,
+.settings-section select {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: #fff;
+  color: var(--text);
+}
+
+.settings-toggle,
+.settings-checkbox-field {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 8px;
+  color: #334155;
+  font-size: 14px;
+}
+
+.settings-toggle input,
+.settings-checkbox-field input {
+  width: 16px;
+  min-height: 16px;
+  accent-color: var(--primary);
+}
+
+.settings-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+}
+
+.settings-form-grid label,
+.settings-platform-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-wide-field {
+  grid-column: 1 / -1;
+}
+
+.settings-platform-field {
+  max-width: 520px;
+}
+
+.system-info-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.system-info-grid div {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px;
+  background: var(--panel-alt);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.system-info-grid span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.system-info-grid strong {
+  font-size: 16px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 @media (max-width: 980px) {
   .app-shell {
     flex-direction: column;
@@ -1065,6 +1267,10 @@ body {
   }
 
   .alert-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .system-info-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -1122,5 +1328,31 @@ body {
   .alerts-filters label,
   .alerts-filter-select {
     width: 100%;
+  }
+
+  .settings-section-header {
+    flex-direction: column;
+  }
+
+  .settings-actions {
+    justify-content: flex-start;
+  }
+
+  .settings-rule-heading {
+    display: none;
+  }
+
+  .settings-rule-row {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .settings-rule-row strong {
+    grid-column: 1 / -1;
+  }
+
+  .settings-form-grid,
+  .system-info-grid {
+    grid-template-columns: 1fr;
   }
 }

@@ -345,10 +345,71 @@
           </section>
         </section>
 
-        <section id="settings-page" class="page-view development-page hidden">
-          <h2>Settings</h2>
-          <p>This feature is under development.</p>
-          <p>More functionality will be available in a future release.</p>
+        <section id="settings-page" class="page-view settings-page hidden">
+          <div class="settings-header">
+            <h1>Settings</h1>
+            <p>Configure alert rules and notification delivery.</p>
+          </div>
+
+          <div id="settings-message" class="settings-message hidden" role="status"></div>
+
+          <section class="settings-section">
+            <div class="settings-section-header">
+              <div>
+                <h2>Alert Rules</h2>
+                <p>Choose which resource thresholds create alerts.</p>
+              </div>
+              <button type="button" id="save-alert-rules" class="settings-save-button">Save Alert Rules</button>
+            </div>
+            <div class="settings-rule-grid">
+              <div class="settings-rule-row settings-rule-heading"><span>Rule</span><span>Enabled</span><span>Threshold</span><span>Severity</span></div>
+              <div class="settings-rule-row">
+                <strong>CPU</strong>
+                <label class="settings-toggle"><input type="checkbox" id="rule-cpu-enabled"><span>Enabled</span></label>
+                <label><span class="visually-hidden">CPU threshold</span><input type="number" id="rule-cpu-threshold" min="1" max="100" step="1"></label>
+                <label><span class="visually-hidden">CPU severity</span><select id="rule-cpu-level"><option value="warning">Warning</option><option value="critical">Critical</option></select></label>
+              </div>
+              <div class="settings-rule-row">
+                <strong>Memory</strong>
+                <label class="settings-toggle"><input type="checkbox" id="rule-memory-enabled"><span>Enabled</span></label>
+                <label><span class="visually-hidden">Memory threshold</span><input type="number" id="rule-memory-threshold" min="1" max="100" step="1"></label>
+                <label><span class="visually-hidden">Memory severity</span><select id="rule-memory-level"><option value="warning">Warning</option><option value="critical">Critical</option></select></label>
+              </div>
+              <div class="settings-rule-row">
+                <strong>Disk</strong>
+                <label class="settings-toggle"><input type="checkbox" id="rule-disk-enabled"><span>Enabled</span></label>
+                <label><span class="visually-hidden">Disk threshold</span><input type="number" id="rule-disk-threshold" min="1" max="100" step="1"></label>
+                <label><span class="visually-hidden">Disk severity</span><select id="rule-disk-level"><option value="warning">Warning</option><option value="critical">Critical</option></select></label>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-section">
+            <div class="settings-section-header">
+              <div><h2>Email Notifications</h2><p>Send status changes through SMTP.</p></div>
+              <div class="settings-actions"><button type="button" id="test-email" class="settings-secondary-button">Test Email</button><button type="button" id="save-notifications" class="settings-save-button">Save Notification Settings</button></div>
+            </div>
+            <div class="settings-form-grid">
+              <label class="settings-checkbox-field"><input type="checkbox" id="email-enabled"><span>Enable Email</span></label>
+              <label><span>SMTP Host</span><input type="text" id="email-smtp-host" autocomplete="off"></label>
+              <label><span>SMTP Port</span><input type="number" id="email-smtp-port" min="1" max="65535"></label>
+              <label><span>SMTP Username</span><input type="text" id="email-smtp-username" autocomplete="off"></label>
+              <label><span>SMTP Password</span><input type="text" id="email-password-status" readonly></label>
+              <label><span>From</span><input type="email" id="email-from" autocomplete="off"></label>
+              <label class="settings-wide-field"><span>To Recipients</span><input type="text" id="email-to" placeholder="ops@example.com, team@example.com" autocomplete="off"></label>
+              <label class="settings-wide-field"><span>CC Recipients</span><input type="text" id="email-cc" placeholder="manager@example.com" autocomplete="off"></label>
+            </div>
+          </section>
+
+          <section class="settings-section">
+            <div class="settings-section-header"><div><h2>Platform</h2><p>Customize the display name used by the monitor.</p></div><button type="button" id="save-platform" class="settings-save-button">Save</button></div>
+            <label class="settings-platform-field"><span>Platform Name</span><input type="text" id="platform-name" maxlength="64"></label>
+          </section>
+
+          <section class="settings-section">
+            <div class="settings-section-header"><div><h2>System</h2><p>Backend and database status.</p></div></div>
+            <div class="system-info-grid"><div><span>Backend Status</span><strong id="system-backend-status">-</strong></div><div><span>Database</span><strong id="system-database">-</strong></div><div><span>Database Size</span><strong id="system-database-size">-</strong></div><div><span>Version</span><strong id="system-version">-</strong></div><div><span>Uptime</span><strong id="system-uptime">-</strong></div></div>
+          </section>
         </section>
       </main>
     </div>

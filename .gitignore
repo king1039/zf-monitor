@@ -24,3 +24,5 @@ zf-monitor-back/data/
 
 # Temporary files
 *.tmp
+*.env
+notification.env

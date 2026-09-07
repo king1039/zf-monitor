@@ -7,6 +7,9 @@ services:
     ports:
       - "18080:8080"
 
+    environment:
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+
     volumes:
       - /opt/zf-monitor-docker-data/backend:/app/data
 

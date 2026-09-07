@@ -11,6 +11,7 @@ const state = {
   alertHostId: '',
   alertTimer: null,
   alertRequestToken: 0,
+  settingsLoaded: false,
 };
 
 const els = {
@@ -65,6 +66,34 @@ const els = {
   alertsLevelFilter: document.getElementById('alerts-level-filter'),
   alertsHostFilter: document.getElementById('alerts-host-filter'),
   alertsTableBody: document.getElementById('alerts-table-body'),
+  settingsMessage: document.getElementById('settings-message'),
+  saveAlertRules: document.getElementById('save-alert-rules'),
+  ruleCpuEnabled: document.getElementById('rule-cpu-enabled'),
+  ruleCpuThreshold: document.getElementById('rule-cpu-threshold'),
+  ruleCpuLevel: document.getElementById('rule-cpu-level'),
+  ruleMemoryEnabled: document.getElementById('rule-memory-enabled'),
+  ruleMemoryThreshold: document.getElementById('rule-memory-threshold'),
+  ruleMemoryLevel: document.getElementById('rule-memory-level'),
+  ruleDiskEnabled: document.getElementById('rule-disk-enabled'),
+  ruleDiskThreshold: document.getElementById('rule-disk-threshold'),
+  ruleDiskLevel: document.getElementById('rule-disk-level'),
+  emailEnabled: document.getElementById('email-enabled'),
+  emailSMTPHost: document.getElementById('email-smtp-host'),
+  emailSMTPPort: document.getElementById('email-smtp-port'),
+  emailSMTPUsername: document.getElementById('email-smtp-username'),
+  emailPasswordStatus: document.getElementById('email-password-status'),
+  emailFrom: document.getElementById('email-from'),
+  emailTo: document.getElementById('email-to'),
+  emailCC: document.getElementById('email-cc'),
+  testEmail: document.getElementById('test-email'),
+  saveNotifications: document.getElementById('save-notifications'),
+  platformName: document.getElementById('platform-name'),
+  savePlatform: document.getElementById('save-platform'),
+  systemBackendStatus: document.getElementById('system-backend-status'),
+  systemDatabase: document.getElementById('system-database'),
+  systemDatabaseSize: document.getElementById('system-database-size'),
+  systemVersion: document.getElementById('system-version'),
+  systemUptime: document.getElementById('system-uptime'),
 };
 
 function setPageError(message) {
@@ -130,6 +159,12 @@ function switchPage(pageName) {
   if (pageName === 'database') {
     document.getElementById('database-page').classList.remove('hidden');
     loadDatabases();
+    return;
+  }
+
+  if (pageName === 'settings') {
+    document.getElementById('settings-page').classList.remove('hidden');
+    loadSettings();
     return;
   }
 
@@ -1264,6 +1299,160 @@ async function loadDatabaseSummary(instanceId) {
   }
 }
 
+function setSettingsMessage(message, type = 'success') {
+  if (!els.settingsMessage) return;
+  els.settingsMessage.textContent = message;
+  els.settingsMessage.className = `settings-message ${type}`;
+}
+
+function setSettingsBusy(button, busy) {
+  if (!button) return;
+  button.disabled = busy;
+  button.dataset.originalText = button.dataset.originalText || button.textContent;
+  button.textContent = busy ? 'Saving...' : button.dataset.originalText;
+}
+
+function renderSettings(data) {
+  const rules = data && data.alertRules ? data.alertRules : {};
+  const email = data && data.notifications && data.notifications.email ? data.notifications.email : {};
+  const setRule = (name, enabled, threshold, level) => {
+    els[`rule${name}Enabled`].checked = Boolean(enabled);
+    els[`rule${name}Threshold`].value = threshold ?? '';
+    els[`rule${name}Level`].value = level || 'warning';
+  };
+  setRule('Cpu', rules.cpu && rules.cpu.enabled, rules.cpu && rules.cpu.threshold, rules.cpu && rules.cpu.level);
+  setRule('Memory', rules.memory && rules.memory.enabled, rules.memory && rules.memory.threshold, rules.memory && rules.memory.level);
+  setRule('Disk', rules.disk && rules.disk.enabled, rules.disk && rules.disk.threshold, rules.disk && rules.disk.level);
+  els.emailEnabled.checked = Boolean(email.enabled);
+  els.emailSMTPHost.value = email.smtpHost || '';
+  els.emailSMTPPort.value = email.smtpPort || 587;
+  els.emailSMTPUsername.value = email.smtpUsername || '';
+  els.emailPasswordStatus.value = email.smtpPasswordConfigured ? 'Configured' : 'Not configured';
+  els.emailFrom.value = email.from || '';
+  els.emailTo.value = Array.isArray(email.to) ? email.to.join(', ') : '';
+  els.emailCC.value = Array.isArray(email.cc) ? email.cc.join(', ') : '';
+  els.platformName.value = data.platform && data.platform.name ? data.platform.name : '';
+  updatePlatformBrand(data.platform && data.platform.name);
+}
+
+function updatePlatformBrand(name) {
+  const platformName = String(name || '').trim() || 'Stark monitor';
+  const brand = document.querySelector('.brand-text');
+  if (brand) brand.textContent = platformName;
+  document.title = platformName;
+}
+
+function formatByteSize(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes < 0) return '-';
+  if (bytes < 1024) return `${bytes.toFixed(0)} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function renderSystemSettings(data) {
+  if (!data) return;
+  els.systemBackendStatus.textContent = data.backendStatus || '-';
+  els.systemDatabase.textContent = data.database || '-';
+  els.systemDatabaseSize.textContent = formatByteSize(data.databaseSizeBytes);
+  els.systemVersion.textContent = data.version || '-';
+  els.systemUptime.textContent = formatUptime(data.uptimeSeconds);
+}
+
+async function loadSettings() {
+  try {
+    const [settingsResponse, systemResponse] = await Promise.all([
+      fetch('/api/settings', { cache: 'no-store' }),
+      fetch('/api/settings/system', { cache: 'no-store' }),
+    ]);
+    if (!settingsResponse.ok || !systemResponse.ok) throw new Error('settings failed');
+    renderSettings(await settingsResponse.json());
+    renderSystemSettings(await systemResponse.json());
+    state.settingsLoaded = true;
+  } catch (err) {
+    console.error('settings fetch failed', err);
+    setSettingsMessage('Failed to load settings.', 'error');
+  }
+}
+
+async function loadPlatformBrand() {
+  try {
+    const response = await fetch('/api/settings', { cache: 'no-store' });
+    if (!response.ok) throw new Error('platform settings failed');
+    const data = await response.json();
+    updatePlatformBrand(data.platform && data.platform.name);
+  } catch (err) {
+    console.error('platform brand fetch failed', err);
+    updatePlatformBrand('Stark monitor');
+  }
+}
+
+function readRuleForm() {
+  return {
+    cpu: { enabled: els.ruleCpuEnabled.checked, threshold: Number(els.ruleCpuThreshold.value), level: els.ruleCpuLevel.value },
+    memory: { enabled: els.ruleMemoryEnabled.checked, threshold: Number(els.ruleMemoryThreshold.value), level: els.ruleMemoryLevel.value },
+    disk: { enabled: els.ruleDiskEnabled.checked, threshold: Number(els.ruleDiskThreshold.value), level: els.ruleDiskLevel.value },
+  };
+}
+
+async function saveAlertRules() {
+  setSettingsBusy(els.saveAlertRules, true);
+  try {
+    const response = await fetch('/api/settings/alert-rules', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(readRuleForm()) });
+    if (!response.ok) throw new Error('rules save failed');
+    renderSettings(await response.json());
+    setSettingsMessage('Settings saved successfully.');
+  } catch (err) {
+    console.error('alert rules save failed', err);
+    setSettingsMessage('Failed to save settings.', 'error');
+  } finally { setSettingsBusy(els.saveAlertRules, false); }
+}
+
+function readRecipientInput(value) {
+  return value.split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+async function saveNotificationSettings() {
+  setSettingsBusy(els.saveNotifications, true);
+  try {
+    const email = { enabled: els.emailEnabled.checked, smtpHost: els.emailSMTPHost.value.trim(), smtpPort: Number(els.emailSMTPPort.value), smtpUsername: els.emailSMTPUsername.value.trim(), from: els.emailFrom.value.trim(), to: readRecipientInput(els.emailTo.value), cc: readRecipientInput(els.emailCC.value) };
+    const response = await fetch('/api/settings/notifications', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+    if (!response.ok) throw new Error('notification save failed');
+    renderSettings(await response.json());
+    setSettingsMessage('Settings saved successfully.');
+  } catch (err) {
+    console.error('notification save failed', err);
+    setSettingsMessage('Failed to save settings.', 'error');
+  } finally { setSettingsBusy(els.saveNotifications, false); }
+}
+
+async function sendTestEmail() {
+  setSettingsBusy(els.testEmail, true);
+  try {
+    const response = await fetch('/api/settings/notifications/test', { method: 'POST' });
+    if (!response.ok) throw new Error('test email failed');
+    setSettingsMessage('Test email sent successfully.');
+  } catch (err) {
+    console.error('test email failed', err);
+    setSettingsMessage('Failed to send test email.', 'error');
+  } finally { setSettingsBusy(els.testEmail, false); }
+}
+
+async function savePlatformSettings() {
+  setSettingsBusy(els.savePlatform, true);
+  try {
+    const response = await fetch('/api/settings/platform', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: els.platformName.value.trim() }) });
+    if (!response.ok) throw new Error('platform save failed');
+    const data = await response.json();
+    updatePlatformBrand(data.name);
+    setSettingsMessage('Settings saved successfully.');
+  } catch (err) {
+    console.error('platform save failed', err);
+    setSettingsMessage('Failed to save settings.', 'error');
+  } finally { setSettingsBusy(els.savePlatform, false); }
+}
+
 if (els.databaseSelect) {
   els.databaseSelect.addEventListener('change', (event) => {
     state.selectedDatabaseId = event.target.value;
@@ -1318,6 +1507,11 @@ if (els.alertsRefresh) {
   });
 }
 
+if (els.saveAlertRules) els.saveAlertRules.addEventListener('click', saveAlertRules);
+if (els.saveNotifications) els.saveNotifications.addEventListener('click', saveNotificationSettings);
+if (els.testEmail) els.testEmail.addEventListener('click', sendTestEmail);
+if (els.savePlatform) els.savePlatform.addEventListener('click', savePlatformSettings);
+
 document.querySelectorAll('.nav-item').forEach((button) => {
   button.addEventListener('click', () => {
     const pageName = button.dataset.page;
@@ -1329,6 +1523,7 @@ document.querySelectorAll('.nav-item').forEach((button) => {
 });
 
 window.addEventListener('load', () => {
+  loadPlatformBrand();
   switchPage('hosts');
   loadHosts();
   setInterval(() => {

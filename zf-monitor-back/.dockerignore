@@ -3,3 +3,6 @@ data/
 zf-monitor-back
 zf-monitor-back.exe
 *.log
+.env
+*.env
+notification.env

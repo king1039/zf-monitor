@@ -171,6 +171,7 @@ func main() {
 	if err := initDB(db); err != nil {
 		log.Fatal(err)
 	}
+	startNotificationWorker()
 
 	http.HandleFunc("/api/hosts", handleHosts)
 	http.HandleFunc("/api/report", handleReport)
@@ -178,6 +179,12 @@ func main() {
 	http.HandleFunc("/api/history", handleHistory)
 	http.HandleFunc("/api/processes", handleProcesses)
 	http.HandleFunc("/api/alerts", handleAlerts)
+	http.HandleFunc("/api/settings", handleSettings)
+	http.HandleFunc("/api/settings/alert-rules", handleAlertRulesSettings)
+	http.HandleFunc("/api/settings/notifications", handleNotificationSettings)
+	http.HandleFunc("/api/settings/notifications/test", handleTestEmail)
+	http.HandleFunc("/api/settings/platform", handlePlatformSettings)
+	http.HandleFunc("/api/settings/system", handleSystemSettings)
 	http.HandleFunc("/api/database/report", handleDatabaseReport)
 	http.HandleFunc("/api/databases", handleDatabases)
 	http.HandleFunc("/api/database/summary", handleDatabaseSummary)
@@ -242,6 +249,9 @@ func initDB(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_unique_firing
 		ON alerts(host_id, rule_name)
 		WHERE status = 'FIRING'`); err != nil {
+		return err
+	}
+	if err := initSettings(db); err != nil {
 		return err
 	}
 	return nil
@@ -623,34 +633,69 @@ func evaluateAlerts(report Report) error {
 	if stateDB == nil {
 		return nil
 	}
-
-	rules := []struct {
+	rules, err := loadAlertRules()
+	if err != nil {
+		return err
+	}
+	configuredRules := []struct {
 		key          string
-		threshold    float64
+		config       AlertRuleConfig
 		currentValue float64
-		level        string
 		message      string
 	}{
-		{key: "cpu", threshold: 90, currentValue: report.CPU, level: "warning", message: "CPU usage exceeds 90%"},
-		{key: "memory", threshold: 85, currentValue: report.Memory, level: "warning", message: "Memory usage exceeds 85%"},
-		{key: "disk", threshold: 90, currentValue: report.Disk, level: "critical", message: "Disk usage exceeds 90%"},
+		{key: "cpu", config: rules.CPU, currentValue: report.CPU, message: "CPU usage exceeds threshold"},
+		{key: "memory", config: rules.Memory, currentValue: report.Memory, message: "Memory usage exceeds threshold"},
+		{key: "disk", config: rules.Disk, currentValue: report.Disk, message: "Disk usage exceeds threshold"},
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	for _, rule := range rules {
-		if rule.currentValue >= rule.threshold {
-			result, err := stateDB.Exec(`UPDATE alerts SET current_value = ?, updated_at = ? WHERE host_id = ? AND rule_name = ? AND status = 'FIRING'`, rule.currentValue, now, report.HostID, rule.key)
+	hostname := report.Hostname
+	if strings.TrimSpace(hostname) == "" {
+		hostname = report.HostID
+	}
+	for _, rule := range configuredRules {
+		if !rule.config.Enabled {
+			var existing AlertRecord
+			if alert, exists := getFiringAlert(report.HostID, rule.key); exists {
+				existing = alert
+			}
+			result, updateErr := stateDB.Exec(`UPDATE alerts SET status = 'RESOLVED', message = 'Rule disabled', resolved_at = ?, updated_at = ?, current_value = ? WHERE host_id = ? AND rule_name = ? AND status = 'FIRING'`, now, now, rule.currentValue, report.HostID, rule.key)
+			if updateErr != nil {
+				return updateErr
+			}
+			if affected, rowsErr := result.RowsAffected(); rowsErr != nil {
+				return rowsErr
+			} else if affected > 0 {
+				existing.Status = "RESOLVED"
+				existing.Message = "Rule disabled"
+				existing.CurrentValue = rule.currentValue
+				existing.ResolvedAt = now
+				existing.UpdatedAt = now
+				enqueueNotification(notificationEvent{Alert: existing, Hostname: hostname})
+			}
+			continue
+		}
+		if rule.currentValue >= rule.config.Threshold {
+			result, err := stateDB.Exec(`UPDATE alerts SET current_value = ?, threshold = ?, level = ?, message = ?, updated_at = ? WHERE host_id = ? AND rule_name = ? AND status = 'FIRING'`, rule.currentValue, rule.config.Threshold, strings.ToLower(rule.config.Level), rule.message, now, report.HostID, rule.key)
 			if err != nil {
 				return err
 			}
 			if affected, err := result.RowsAffected(); err != nil {
 				return err
 			} else if affected == 0 {
-				_, err = stateDB.Exec(`INSERT OR IGNORE INTO alerts (host_id, rule_name, level, message, status, current_value, threshold, started_at, updated_at, timestamp)
+				insertResult, insertErr := stateDB.Exec(`INSERT OR IGNORE INTO alerts (host_id, rule_name, level, message, status, current_value, threshold, started_at, updated_at, timestamp)
 					VALUES (?, ?, ?, ?, 'FIRING', ?, ?, ?, ?, ?)`,
-					report.HostID, rule.key, rule.level, rule.message, rule.currentValue, rule.threshold, now, now, now)
-				if err != nil {
-					return err
+					report.HostID, rule.key, strings.ToLower(rule.config.Level), rule.message, rule.currentValue, rule.config.Threshold, now, now, now)
+				if insertErr != nil {
+					return insertErr
+				}
+				inserted, rowsErr := insertResult.RowsAffected()
+				if rowsErr != nil {
+					return rowsErr
+				}
+				if inserted > 0 {
+					alert := AlertRecord{RuleName: rule.key, Level: strings.ToLower(rule.config.Level), Message: rule.message, Status: "FIRING", CurrentValue: rule.currentValue, Threshold: rule.config.Threshold, StartedAt: now, UpdatedAt: now, Timestamp: now}
+					enqueueNotification(notificationEvent{Alert: alert, Hostname: hostname})
 				}
 			}
 			if _, err := stateDB.Exec(`UPDATE alerts SET current_value = ?, updated_at = ? WHERE host_id = ? AND rule_name = ? AND status = 'FIRING'`, rule.currentValue, now, report.HostID, rule.key); err != nil {
@@ -659,8 +704,22 @@ func evaluateAlerts(report Report) error {
 			continue
 		}
 
-		if _, err := stateDB.Exec(`UPDATE alerts SET status = 'RESOLVED', resolved_at = ?, updated_at = ?, current_value = ? WHERE host_id = ? AND rule_name = ? AND status = 'FIRING'`, now, now, rule.currentValue, report.HostID, rule.key); err != nil {
+		existing, exists := getFiringAlert(report.HostID, rule.key)
+		result, err := stateDB.Exec(`UPDATE alerts SET status = 'RESOLVED', resolved_at = ?, updated_at = ?, current_value = ? WHERE host_id = ? AND rule_name = ? AND status = 'FIRING'`, now, now, rule.currentValue, report.HostID, rule.key)
+		if err != nil {
 			return err
+		}
+		if affected, rowsErr := result.RowsAffected(); rowsErr != nil {
+			return rowsErr
+		} else if affected > 0 {
+			if !exists {
+				existing = AlertRecord{RuleName: rule.key, Level: strings.ToLower(rule.config.Level), Threshold: rule.config.Threshold}
+			}
+			existing.Status = "RESOLVED"
+			existing.CurrentValue = rule.currentValue
+			existing.ResolvedAt = now
+			existing.UpdatedAt = now
+			enqueueNotification(notificationEvent{Alert: existing, Hostname: hostname})
 		}
 	}
 	return nil
