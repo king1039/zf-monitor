@@ -5,6 +5,7 @@ on:
     branches:
       - feature/cicd
       - feature/alert
+      - feature/setting
   workflow_dispatch:
 
 permissions:
