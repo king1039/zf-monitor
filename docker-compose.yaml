@@ -1,7 +1,7 @@
 services:
 
   zf-monitor-back:
-    image: zf-monitor-back:latest
+    image: ghcr.io/king1039/zf-monitor-back:latest
     container_name: zf-monitor-back
 
     ports:
@@ -17,7 +17,7 @@ services:
 
 
   zf-monitor-db-controller:
-    image: zf-monitor-db-controller:latest
+    image: ghcr.io/king1039/zf-monitor-db-controller:latest
     container_name: zf-monitor-db-controller
 
     volumes:
