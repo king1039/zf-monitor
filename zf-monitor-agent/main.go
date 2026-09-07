@@ -22,7 +22,7 @@ import (
 
 const (
 	serviceName        = "ZFMonitorAgent"
-	serviceDisplayName = "ZF Monitor Agent"
+	serviceDisplayName = "Stark monitor Agent"
 )
 
 type ProcessInfo struct {

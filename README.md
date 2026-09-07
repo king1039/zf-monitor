@@ -1,4 +1,4 @@
-# ZF Monitor
+# Stark monitor
 
 A minimal server monitoring system with two independent Go projects in one repository.
 

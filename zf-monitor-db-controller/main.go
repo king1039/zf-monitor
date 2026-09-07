@@ -80,7 +80,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	fmt.Println("ZF Monitor DB Controller starting...")
+	fmt.Println("Stark monitor DB Controller starting...")
 	fmt.Printf("Loaded %d database instance(s)\n", len(cfg.Databases))
 
 	collectInstances(cfg)
