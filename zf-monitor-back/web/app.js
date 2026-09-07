@@ -6,6 +6,11 @@ const state = {
   activePage: 'hosts',
   selectedDatabaseId: '',
   databaseList: [],
+  alertStatus: '',
+  alertLevel: '',
+  alertHostId: '',
+  alertTimer: null,
+  alertRequestToken: 0,
 };
 
 const els = {
@@ -51,6 +56,15 @@ const els = {
   databaseSize: document.getElementById('database-size'),
   databasePort: document.getElementById('database-port'),
   databaseInstanceTableBody: document.getElementById('database-instance-table-body'),
+  alertsRefresh: document.getElementById('alerts-refresh'),
+  alertsActiveCount: document.getElementById('alerts-active-count'),
+  alertsCriticalCount: document.getElementById('alerts-critical-count'),
+  alertsWarningCount: document.getElementById('alerts-warning-count'),
+  alertsResolvedCount: document.getElementById('alerts-resolved-count'),
+  alertsStatusFilter: document.getElementById('alerts-status-filter'),
+  alertsLevelFilter: document.getElementById('alerts-level-filter'),
+  alertsHostFilter: document.getElementById('alerts-host-filter'),
+  alertsTableBody: document.getElementById('alerts-table-body'),
 };
 
 function setPageError(message) {
@@ -84,6 +98,9 @@ function clearDatabaseError() {
 }
 
 function switchPage(pageName) {
+  if (state.activePage === 'alerts' && pageName !== 'alerts') {
+    stopAlertsRefresh();
+  }
   state.activePage = pageName;
 
   const navItems = document.querySelectorAll('.nav-item');
@@ -113,6 +130,12 @@ function switchPage(pageName) {
   if (pageName === 'database') {
     document.getElementById('database-page').classList.remove('hidden');
     loadDatabases();
+    return;
+  }
+
+  if (pageName === 'alerts') {
+    document.getElementById('alerts-page').classList.remove('hidden');
+    startAlertsRefresh();
     return;
   }
 
@@ -163,6 +186,62 @@ function formatPercent(value) {
     return '0.0%';
   }
   return `${Number(value).toFixed(1)}%`;
+}
+
+function formatAlertRuleName(ruleName) {
+  const names = {
+    cpu: 'CPU Usage',
+    memory: 'Memory Usage',
+    disk: 'Disk Usage',
+  };
+  return names[String(ruleName || '').toLowerCase()] || ruleName || 'Alert';
+}
+
+function formatAlertDateTime(timestamp) {
+  if (!timestamp) {
+    return '-';
+  }
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return '-';
+  }
+  return date.toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function formatDuration(startedAt, resolvedAt) {
+  if (!startedAt) {
+    return '-';
+  }
+  const start = new Date(startedAt).getTime();
+  const end = resolvedAt ? new Date(resolvedAt).getTime() : Date.now();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+    return '-';
+  }
+
+  let seconds = Math.floor((end - start) / 1000);
+  const days = Math.floor(seconds / 86400);
+  seconds %= 86400;
+  const hours = Math.floor(seconds / 3600);
+  seconds %= 3600;
+  const minutes = Math.floor(seconds / 60);
+  seconds %= 60;
+
+  if (days > 0) {
+    return `${days}d ${hours}h`;
+  }
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m`;
+  }
+  return `${seconds}s`;
 }
 
 function formatKbps(value) {
@@ -592,21 +671,247 @@ function renderAlerts(alerts) {
 
   els.alertList.innerHTML = '';
 
-  if (!Array.isArray(alerts) || alerts.length === 0) {
+  const activeAlerts = Array.isArray(alerts)
+    ? alerts.filter((alert) => String(alert.status || '').toUpperCase() === 'FIRING')
+    : [];
+
+  if (activeAlerts.length === 0) {
     const item = document.createElement('li');
     item.className = 'alert-item normal';
-    item.innerHTML = '<span class="alert-icon">✓</span><span>No recent alerts. All clear!</span>';
+    const icon = document.createElement('span');
+    icon.className = 'alert-icon';
+    icon.textContent = '✓';
+    const text = document.createElement('span');
+    text.textContent = 'No active alerts. All clear!';
+    item.appendChild(icon);
+    item.appendChild(text);
     els.alertList.appendChild(item);
     return;
   }
 
-  alerts.slice(0, 5).forEach((alert) => {
+  activeAlerts.slice(0, 5).forEach((alert) => {
     const level = String(alert.level || 'warning').toLowerCase();
     const item = document.createElement('li');
     item.className = `alert-item ${level === 'critical' ? 'critical' : 'warning'}`;
-    item.innerHTML = `<span class="alert-icon">${level === 'critical' ? '!' : '⚠'}</span><span>${(level || 'WARNING').toUpperCase()} - ${alert.message || 'Alert'}</span>`;
+    const icon = document.createElement('span');
+    icon.className = 'alert-icon';
+    icon.textContent = level === 'critical' ? '!' : '⚠';
+    const text = document.createElement('span');
+    text.textContent = `${level.toUpperCase()} - ${alert.message || 'Alert'}`;
+    item.appendChild(icon);
+    item.appendChild(text);
     els.alertList.appendChild(item);
   });
+}
+
+function renderAlertSummary(alerts) {
+  const firingAlerts = alerts.filter((alert) => String(alert.status || '').toUpperCase() === 'FIRING');
+  const criticalAlerts = firingAlerts.filter((alert) => String(alert.level || '').toLowerCase() === 'critical');
+  const warningAlerts = firingAlerts.filter((alert) => String(alert.level || '').toLowerCase() === 'warning');
+  const resolvedAlerts = alerts.filter((alert) => String(alert.status || '').toUpperCase() === 'RESOLVED');
+
+  if (els.alertsActiveCount) els.alertsActiveCount.textContent = String(firingAlerts.length);
+  if (els.alertsCriticalCount) els.alertsCriticalCount.textContent = String(criticalAlerts.length);
+  if (els.alertsWarningCount) els.alertsWarningCount.textContent = String(warningAlerts.length);
+  if (els.alertsResolvedCount) els.alertsResolvedCount.textContent = String(resolvedAlerts.length);
+}
+
+function setAlertsTableState(message, className = '') {
+  if (!els.alertsTableBody) {
+    return;
+  }
+  els.alertsTableBody.innerHTML = '';
+  const row = document.createElement('tr');
+  const cell = document.createElement('td');
+  cell.colSpan = 9;
+  cell.className = `alerts-state-cell ${className}`.trim();
+  cell.textContent = message;
+  row.appendChild(cell);
+  els.alertsTableBody.appendChild(row);
+}
+
+function populateAlertHostFilterFromHosts(hosts) {
+  if (!els.alertsHostFilter) {
+    return;
+  }
+
+  const hostOptions = new Map();
+  hosts.forEach((host) => {
+    if (host.hostId) {
+      hostOptions.set(host.hostId, host.hostname || host.hostId);
+    }
+  });
+
+  els.alertsHostFilter.innerHTML = '';
+  const allOption = document.createElement('option');
+  allOption.value = '';
+  allOption.textContent = 'All Hosts';
+  els.alertsHostFilter.appendChild(allOption);
+  Array.from(hostOptions.entries())
+    .sort((first, second) => first[1].localeCompare(second[1]))
+    .forEach(([hostId, hostname]) => {
+      const option = document.createElement('option');
+      option.value = hostId;
+      option.textContent = hostname;
+      els.alertsHostFilter.appendChild(option);
+    });
+
+  if (hostOptions.has(state.alertHostId)) {
+    els.alertsHostFilter.value = state.alertHostId;
+  } else {
+    state.alertHostId = '';
+    els.alertsHostFilter.value = '';
+  }
+}
+
+function appendAlertCell(row, value, className = '') {
+  const cell = document.createElement('td');
+  cell.textContent = value;
+  if (className) {
+    cell.className = className;
+  }
+  row.appendChild(cell);
+  return cell;
+}
+
+function renderAlertTable(alerts) {
+  if (!els.alertsTableBody) {
+    return;
+  }
+  els.alertsTableBody.innerHTML = '';
+
+  if (!alerts.length) {
+    setAlertsTableState(state.alertStatus || state.alertLevel || state.alertHostId
+      ? 'No alerts match the current filters.'
+      : 'No alerts found.');
+    return;
+  }
+
+  alerts.forEach((alert) => {
+    const status = String(alert.status || 'RESOLVED').toUpperCase();
+    const level = String(alert.level || 'warning').toLowerCase();
+    const row = document.createElement('tr');
+    row.className = status === 'FIRING' ? 'alert-row-firing' : 'alert-row-resolved';
+
+    const statusCell = document.createElement('td');
+    const statusBadge = document.createElement('span');
+    statusBadge.className = `alert-status-badge ${status === 'FIRING' ? 'firing' : 'resolved'}`;
+    statusBadge.textContent = status === 'FIRING' ? 'FIRING' : 'RESOLVED';
+    statusCell.appendChild(statusBadge);
+    row.appendChild(statusCell);
+
+    const levelCell = document.createElement('td');
+    const levelBadge = document.createElement('span');
+    levelBadge.className = `alert-level-badge ${level === 'critical' ? 'critical' : 'warning'}`;
+    levelBadge.textContent = level === 'critical' ? 'Critical' : 'Warning';
+    levelCell.appendChild(levelBadge);
+    row.appendChild(levelCell);
+
+    const hostCell = document.createElement('td');
+    const hostName = document.createElement('strong');
+    hostName.textContent = alert.hostname || alert.hostId || '-';
+    hostCell.appendChild(hostName);
+    if (alert.hostname && alert.hostId && alert.hostname !== alert.hostId) {
+      const hostId = document.createElement('small');
+      hostId.textContent = alert.hostId;
+      hostCell.appendChild(hostId);
+    }
+    hostCell.className = 'alert-host-cell';
+    row.appendChild(hostCell);
+
+    const alertCell = document.createElement('td');
+    const ruleName = document.createElement('strong');
+    ruleName.textContent = formatAlertRuleName(alert.ruleName);
+    const message = document.createElement('small');
+    message.textContent = alert.message || '-';
+    alertCell.appendChild(ruleName);
+    alertCell.appendChild(message);
+    alertCell.className = 'alert-name-cell';
+    row.appendChild(alertCell);
+
+    appendAlertCell(row, hasValidNumber(alert.currentValue) ? formatPercent(Number(alert.currentValue)) : '-');
+    appendAlertCell(row, hasValidNumber(alert.threshold) ? formatPercent(Number(alert.threshold)) : '-');
+    appendAlertCell(row, formatAlertDateTime(alert.startedAt));
+    appendAlertCell(row, formatDuration(alert.startedAt, status === 'RESOLVED' ? alert.resolvedAt : ''));
+    appendAlertCell(row, formatAlertDateTime(alert.updatedAt));
+    els.alertsTableBody.appendChild(row);
+  });
+}
+
+async function loadAlerts() {
+  if (state.activePage !== 'alerts') {
+    return;
+  }
+
+  const token = ++state.alertRequestToken;
+
+  const params = new URLSearchParams({ limit: '500' });
+  if (state.alertStatus) params.set('status', state.alertStatus);
+  if (state.alertLevel) params.set('level', state.alertLevel);
+  if (state.alertHostId) params.set('hostId', state.alertHostId);
+
+  if (els.alertsRefresh) {
+    els.alertsRefresh.disabled = true;
+    els.alertsRefresh.classList.add('loading');
+  }
+  setAlertsTableState('Loading alerts...');
+
+  try {
+    const [allAlertsResponse, filteredAlertsResponse, hostsResponse] = await Promise.all([
+      fetch('/api/alerts?limit=500', { cache: 'no-store' }),
+      fetch(`/api/alerts?${params.toString()}`, { cache: 'no-store' }),
+      fetch('/api/hosts', { cache: 'no-store' }),
+    ]);
+    if (!allAlertsResponse.ok || !filteredAlertsResponse.ok || !hostsResponse.ok) {
+      throw new Error('Failed to load alerts');
+    }
+
+    const [allAlertsData, filteredAlertsData, hostsData] = await Promise.all([
+      allAlertsResponse.json(),
+      filteredAlertsResponse.json(),
+      hostsResponse.json(),
+    ]);
+    if (token !== state.alertRequestToken) {
+      return;
+    }
+
+    const allAlerts = Array.isArray(allAlertsData) ? allAlertsData : [];
+    const filteredAlerts = Array.isArray(filteredAlertsData) ? filteredAlertsData : [];
+    state.hosts = Array.isArray(hostsData) ? hostsData : [];
+    renderAlertSummary(allAlerts);
+    populateAlertHostFilterFromHosts(state.hosts);
+    renderAlertTable(filteredAlerts);
+  } catch (err) {
+    if (token !== state.alertRequestToken) {
+      return;
+    }
+    console.error('alerts fetch failed', err);
+    renderAlertSummary([]);
+    setAlertsTableState('Failed to load alerts.', 'error');
+  } finally {
+    if (token === state.alertRequestToken && els.alertsRefresh) {
+      els.alertsRefresh.disabled = false;
+      els.alertsRefresh.classList.remove('loading');
+    }
+  }
+}
+
+function stopAlertsRefresh() {
+  state.alertRequestToken += 1;
+  if (state.alertTimer !== null) {
+    clearInterval(state.alertTimer);
+    state.alertTimer = null;
+  }
+}
+
+function startAlertsRefresh() {
+  stopAlertsRefresh();
+  loadAlerts();
+  state.alertTimer = setInterval(() => {
+    if (state.activePage === 'alerts') {
+      loadAlerts();
+    }
+  }, 10000);
 }
 
 function updateHostSelection(hostId) {
@@ -980,6 +1285,35 @@ if (els.historyWindow) {
     state.historyWindow = event.target.value;
     if (state.selectedHostId) {
       refreshSelectedHostData();
+    }
+  });
+}
+
+if (els.alertsStatusFilter) {
+  els.alertsStatusFilter.addEventListener('change', (event) => {
+    state.alertStatus = event.target.value;
+    loadAlerts();
+  });
+}
+
+if (els.alertsLevelFilter) {
+  els.alertsLevelFilter.addEventListener('change', (event) => {
+    state.alertLevel = event.target.value;
+    loadAlerts();
+  });
+}
+
+if (els.alertsHostFilter) {
+  els.alertsHostFilter.addEventListener('change', (event) => {
+    state.alertHostId = event.target.value;
+    loadAlerts();
+  });
+}
+
+if (els.alertsRefresh) {
+  els.alertsRefresh.addEventListener('click', () => {
+    if (!els.alertsRefresh.disabled) {
+      loadAlerts();
     }
   });
 }

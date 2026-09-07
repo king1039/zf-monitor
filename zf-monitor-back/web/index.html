@@ -268,10 +268,81 @@
           </article>
         </section>
 
-        <section id="alerts-page" class="page-view development-page hidden">
-          <h2>Alerts</h2>
-          <p>This feature is under development.</p>
-          <p>More functionality will be available in a future release.</p>
+        <section id="alerts-page" class="page-view alerts-page hidden">
+          <div class="alerts-header">
+            <div>
+              <h1>Alerts</h1>
+              <p>Monitor active and resolved host conditions.</p>
+            </div>
+            <button type="button" id="alerts-refresh" class="alerts-refresh-button">Refresh</button>
+          </div>
+
+          <section class="alert-summary-grid" aria-label="Alert summary">
+            <article class="alert-summary-card">
+              <span>Active Alerts</span>
+              <strong id="alerts-active-count">0</strong>
+            </article>
+            <article class="alert-summary-card critical">
+              <span>Critical</span>
+              <strong id="alerts-critical-count">0</strong>
+            </article>
+            <article class="alert-summary-card warning">
+              <span>Warning</span>
+              <strong id="alerts-warning-count">0</strong>
+            </article>
+            <article class="alert-summary-card resolved">
+              <span>Resolved</span>
+              <strong id="alerts-resolved-count">0</strong>
+            </article>
+          </section>
+
+          <section class="alerts-panel">
+            <div class="alerts-filters" aria-label="Alert filters">
+              <label>
+                <span>Status</span>
+                <select id="alerts-status-filter" class="alerts-filter-select">
+                  <option value="">All</option>
+                  <option value="FIRING">FIRING</option>
+                  <option value="RESOLVED">RESOLVED</option>
+                </select>
+              </label>
+              <label>
+                <span>Severity</span>
+                <select id="alerts-level-filter" class="alerts-filter-select">
+                  <option value="">All</option>
+                  <option value="critical">Critical</option>
+                  <option value="warning">Warning</option>
+                </select>
+              </label>
+              <label>
+                <span>Host</span>
+                <select id="alerts-host-filter" class="alerts-filter-select">
+                  <option value="">All Hosts</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="alerts-table-wrap">
+              <table class="alerts-table">
+                <thead>
+                  <tr>
+                    <th>Status</th>
+                    <th>Severity</th>
+                    <th>Host</th>
+                    <th>Alert</th>
+                    <th>Current</th>
+                    <th>Threshold</th>
+                    <th>Started</th>
+                    <th>Duration</th>
+                    <th>Updated</th>
+                  </tr>
+                </thead>
+                <tbody id="alerts-table-body">
+                  <tr><td colspan="9" class="alerts-state-cell">Loading alerts...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
         </section>
 
         <section id="settings-page" class="page-view development-page hidden">

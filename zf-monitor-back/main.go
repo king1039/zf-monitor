@@ -35,10 +35,32 @@ type Report struct {
 }
 
 type AlertRecord struct {
-	RuleName  string `json:"ruleName"`
-	Level     string `json:"level"`
-	Message   string `json:"message"`
-	Timestamp string `json:"timestamp"`
+	RuleName     string  `json:"ruleName"`
+	Level        string  `json:"level"`
+	Message      string  `json:"message"`
+	Status       string  `json:"status"`
+	CurrentValue float64 `json:"currentValue"`
+	Threshold    float64 `json:"threshold"`
+	StartedAt    string  `json:"startedAt"`
+	ResolvedAt   string  `json:"resolvedAt"`
+	UpdatedAt    string  `json:"updatedAt"`
+	Timestamp    string  `json:"timestamp"`
+}
+
+type AlertListItem struct {
+	ID           int64   `json:"id"`
+	HostID       string  `json:"hostId"`
+	Hostname     string  `json:"hostname"`
+	RuleName     string  `json:"ruleName"`
+	Level        string  `json:"level"`
+	Message      string  `json:"message"`
+	Status       string  `json:"status"`
+	CurrentValue float64 `json:"currentValue"`
+	Threshold    float64 `json:"threshold"`
+	StartedAt    string  `json:"startedAt"`
+	ResolvedAt   string  `json:"resolvedAt"`
+	UpdatedAt    string  `json:"updatedAt"`
+	Timestamp    string  `json:"timestamp"`
 }
 
 type MetricPoint struct {
@@ -128,11 +150,9 @@ type DatabaseSummaryResponse struct {
 }
 
 var (
-	stateMu       sync.RWMutex
-	alertMu       sync.Mutex
-	hostStates    = map[string]*HostRuntimeState{}
-	stateAlertMap = map[string]map[string]bool{}
-	stateDB       *sql.DB
+	stateMu    sync.RWMutex
+	hostStates = map[string]*HostRuntimeState{}
+	stateDB    *sql.DB
 )
 
 func main() {
@@ -157,6 +177,7 @@ func main() {
 	http.HandleFunc("/api/summary", handleSummary)
 	http.HandleFunc("/api/history", handleHistory)
 	http.HandleFunc("/api/processes", handleProcesses)
+	http.HandleFunc("/api/alerts", handleAlerts)
 	http.HandleFunc("/api/database/report", handleDatabaseReport)
 	http.HandleFunc("/api/databases", handleDatabases)
 	http.HandleFunc("/api/database/summary", handleDatabaseSummary)
@@ -170,7 +191,7 @@ func initDB(db *sql.DB) error {
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS hosts (host_id TEXT PRIMARY KEY, hostname TEXT, last_seen TEXT);`,
 		`CREATE TABLE IF NOT EXISTS metrics (id INTEGER PRIMARY KEY AUTOINCREMENT, host_id TEXT NOT NULL, timestamp TEXT, name TEXT, value REAL, unit TEXT);`,
-		`CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, host_id TEXT NOT NULL, rule_name TEXT, level TEXT, message TEXT, timestamp TEXT);`,
+		`CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, host_id TEXT NOT NULL, rule_name TEXT, level TEXT, message TEXT, timestamp TEXT, status TEXT, current_value REAL, threshold REAL, started_at TEXT, resolved_at TEXT, updated_at TEXT);`,
 		`CREATE TABLE IF NOT EXISTS database_instances (instance_id TEXT PRIMARY KEY, name TEXT, db_type TEXT, host TEXT, port INTEGER, server_name TEXT, version TEXT, product_level TEXT, edition TEXT, status TEXT, last_seen DATETIME, last_error TEXT);`,
 		`CREATE TABLE IF NOT EXISTS database_metrics (id INTEGER PRIMARY KEY AUTOINCREMENT, instance_id TEXT NOT NULL, timestamp DATETIME NOT NULL, uptime_seconds REAL, connections REAL, max_connections REAL, active_sessions REAL, running_requests REAL, database_count REAL, total_database_size_mb REAL);`,
 		`CREATE INDEX IF NOT EXISTS idx_database_metrics_instance_timestamp ON database_metrics(instance_id, timestamp);`,
@@ -187,10 +208,50 @@ func initDB(db *sql.DB) error {
 	if err := ensureColumn(db, "alerts", "host_id"); err != nil {
 		return err
 	}
+	for _, column := range []struct {
+		name     string
+		typeName string
+	}{
+		{name: "status", typeName: "TEXT"},
+		{name: "current_value", typeName: "REAL"},
+		{name: "threshold", typeName: "REAL"},
+		{name: "started_at", typeName: "TEXT"},
+		{name: "resolved_at", typeName: "TEXT"},
+		{name: "updated_at", typeName: "TEXT"},
+	} {
+		if err := ensureColumnType(db, "alerts", column.name, column.typeName); err != nil {
+			return err
+		}
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`UPDATE alerts SET status = 'RESOLVED' WHERE status IS NULL OR TRIM(status) = ''`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE alerts
+		SET status = 'RESOLVED', resolved_at = ?, updated_at = ?
+		WHERE status = 'FIRING'
+		  AND id NOT IN (
+			SELECT MAX(id)
+			FROM alerts
+			WHERE status = 'FIRING'
+			GROUP BY host_id, rule_name
+		)`, now, now); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_unique_firing
+		ON alerts(host_id, rule_name)
+		WHERE status = 'FIRING'`); err != nil {
+		return err
+	}
 	return nil
 }
 
 func ensureColumn(db *sql.DB, tableName, columnName string) error {
+	return ensureColumnType(db, tableName, columnName, "TEXT")
+}
+
+func ensureColumnType(db *sql.DB, tableName, columnName, columnType string) error {
 	rows, err := db.Query("PRAGMA table_info(" + tableName + ")")
 	if err != nil {
 		return err
@@ -207,7 +268,7 @@ func ensureColumn(db *sql.DB, tableName, columnName string) error {
 			return nil
 		}
 	}
-	_, err = db.Exec("ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " TEXT")
+	_, err = db.Exec("ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " " + columnType)
 	return err
 }
 
@@ -250,6 +311,102 @@ func handleHosts(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(hosts)
+}
+
+func handleAlerts(w http.ResponseWriter, r *http.Request) {
+	setNoCache(w)
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if stateDB == nil {
+		http.Error(w, "database unavailable", http.StatusInternalServerError)
+		return
+	}
+
+	query := r.URL.Query()
+	conditions := []string{}
+	args := []interface{}{}
+	statusExpression := `CASE WHEN alerts.status IS NULL OR TRIM(alerts.status) = '' THEN 'RESOLVED' ELSE UPPER(alerts.status) END`
+
+	status := strings.ToUpper(strings.TrimSpace(query.Get("status")))
+	if status == "FIRING" || status == "RESOLVED" {
+		conditions = append(conditions, statusExpression+" = ?")
+		args = append(args, status)
+	}
+	if hostID := query.Get("hostId"); hostID != "" {
+		conditions = append(conditions, "alerts.host_id = ?")
+		args = append(args, hostID)
+	}
+	level := strings.ToLower(strings.TrimSpace(query.Get("level")))
+	if level == "warning" || level == "critical" {
+		conditions = append(conditions, "LOWER(alerts.level) = ?")
+		args = append(args, level)
+	}
+
+	limit := 100
+	if value := query.Get("limit"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
+			limit = parsed
+			if limit > 500 {
+				limit = 500
+			}
+		}
+	}
+
+	queryText := `SELECT alerts.id, alerts.host_id,
+		COALESCE(NULLIF(TRIM(hosts.hostname), ''), alerts.host_id),
+		alerts.rule_name, alerts.level, alerts.message, ` + statusExpression + `,
+		alerts.current_value, alerts.threshold, alerts.started_at, alerts.resolved_at,
+		alerts.updated_at, alerts.timestamp
+		FROM alerts
+		LEFT JOIN hosts ON hosts.host_id = alerts.host_id`
+	if len(conditions) > 0 {
+		queryText += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	queryText += ` ORDER BY CASE WHEN ` + statusExpression + ` = 'FIRING' THEN 0 ELSE 1 END,
+		CASE WHEN LOWER(alerts.level) = 'critical' THEN 0 ELSE 1 END,
+		alerts.updated_at DESC, alerts.id DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := stateDB.Query(queryText, args...)
+	if err != nil {
+		http.Error(w, "failed to read alerts", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	alerts := []AlertListItem{}
+	for rows.Next() {
+		var item AlertListItem
+		var hostID, hostname, ruleName, level, message, status sql.NullString
+		var currentValue, threshold sql.NullFloat64
+		var startedAt, resolvedAt, updatedAt, timestamp sql.NullString
+		if err := rows.Scan(&item.ID, &hostID, &hostname, &ruleName, &level, &message, &status, &currentValue, &threshold, &startedAt, &resolvedAt, &updatedAt, &timestamp); err != nil {
+			http.Error(w, "failed to read alerts", http.StatusInternalServerError)
+			return
+		}
+		item.HostID = hostID.String
+		item.Hostname = hostname.String
+		item.RuleName = ruleName.String
+		item.Level = level.String
+		item.Message = message.String
+		item.Status = status.String
+		item.CurrentValue = currentValue.Float64
+		item.Threshold = threshold.Float64
+		item.StartedAt = startedAt.String
+		item.ResolvedAt = resolvedAt.String
+		item.UpdatedAt = updatedAt.String
+		item.Timestamp = timestamp.String
+		alerts = append(alerts, item)
+	}
+	if err := rows.Err(); err != nil {
+		http.Error(w, "failed to read alerts", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(alerts)
 }
 
 func listHosts() ([]HostListItem, error) {
@@ -468,48 +625,41 @@ func evaluateAlerts(report Report) error {
 	}
 
 	rules := []struct {
-		key     string
-		expr    bool
-		level   string
-		message string
+		key          string
+		threshold    float64
+		currentValue float64
+		level        string
+		message      string
 	}{
-		{key: "cpu", expr: report.CPU >= 90, level: "warning", message: "CPU usage exceeds 90%"},
-		{key: "memory", expr: report.Memory >= 85, level: "warning", message: "Memory usage exceeds 85%"},
-		{key: "disk", expr: report.Disk >= 90, level: "critical", message: "Disk usage exceeds 90%"},
+		{key: "cpu", threshold: 90, currentValue: report.CPU, level: "warning", message: "CPU usage exceeds 90%"},
+		{key: "memory", threshold: 85, currentValue: report.Memory, level: "warning", message: "Memory usage exceeds 85%"},
+		{key: "disk", threshold: 90, currentValue: report.Disk, level: "critical", message: "Disk usage exceeds 90%"},
 	}
 
-	triggered := make([]struct {
-		key     string
-		level   string
-		message string
-	}, 0, len(rules))
-
-	alertMu.Lock()
-	if _, ok := stateAlertMap[report.HostID]; !ok {
-		stateAlertMap[report.HostID] = map[string]bool{}
-	}
-
+	now := time.Now().UTC().Format(time.RFC3339)
 	for _, rule := range rules {
-		current, exists := stateAlertMap[report.HostID][rule.key]
-		if rule.expr {
-			if !exists || !current {
-				stateAlertMap[report.HostID][rule.key] = true
-				triggered = append(triggered, struct {
-					key     string
-					level   string
-					message string
-				}{key: rule.key, level: rule.level, message: rule.message})
+		if rule.currentValue >= rule.threshold {
+			result, err := stateDB.Exec(`UPDATE alerts SET current_value = ?, updated_at = ? WHERE host_id = ? AND rule_name = ? AND status = 'FIRING'`, rule.currentValue, now, report.HostID, rule.key)
+			if err != nil {
+				return err
 			}
-		} else {
-			if exists && current {
-				stateAlertMap[report.HostID][rule.key] = false
+			if affected, err := result.RowsAffected(); err != nil {
+				return err
+			} else if affected == 0 {
+				_, err = stateDB.Exec(`INSERT OR IGNORE INTO alerts (host_id, rule_name, level, message, status, current_value, threshold, started_at, updated_at, timestamp)
+					VALUES (?, ?, ?, ?, 'FIRING', ?, ?, ?, ?, ?)`,
+					report.HostID, rule.key, rule.level, rule.message, rule.currentValue, rule.threshold, now, now, now)
+				if err != nil {
+					return err
+				}
 			}
+			if _, err := stateDB.Exec(`UPDATE alerts SET current_value = ?, updated_at = ? WHERE host_id = ? AND rule_name = ? AND status = 'FIRING'`, rule.currentValue, now, report.HostID, rule.key); err != nil {
+				return err
+			}
+			continue
 		}
-	}
-	alertMu.Unlock()
 
-	for _, alert := range triggered {
-		if _, err := stateDB.Exec(`INSERT INTO alerts (host_id, rule_name, level, message, timestamp) VALUES (?, ?, ?, ?, ?)`, report.HostID, alert.key, alert.level, alert.message, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		if _, err := stateDB.Exec(`UPDATE alerts SET status = 'RESOLVED', resolved_at = ?, updated_at = ?, current_value = ? WHERE host_id = ? AND rule_name = ? AND status = 'FIRING'`, now, now, rule.currentValue, report.HostID, rule.key); err != nil {
 			return err
 		}
 	}
@@ -520,7 +670,7 @@ func getRecentAlerts(hostID string) []AlertRecord {
 	if stateDB == nil {
 		return nil
 	}
-	rows, err := stateDB.Query(`SELECT rule_name, level, message, timestamp FROM alerts WHERE host_id = ? ORDER BY id DESC LIMIT 20`, hostID)
+	rows, err := stateDB.Query(`SELECT rule_name, level, message, status, current_value, threshold, started_at, resolved_at, updated_at, timestamp FROM alerts WHERE host_id = ? ORDER BY id DESC LIMIT 20`, hostID)
 	if err != nil {
 		return nil
 	}
@@ -528,11 +678,20 @@ func getRecentAlerts(hostID string) []AlertRecord {
 
 	result := []AlertRecord{}
 	for rows.Next() {
-		var ruleName, level, message, ts string
-		if err := rows.Scan(&ruleName, &level, &message, &ts); err != nil {
+		var ruleName, level, message, status, startedAt, resolvedAt, updatedAt, ts sql.NullString
+		var currentValue, threshold sql.NullFloat64
+		if err := rows.Scan(&ruleName, &level, &message, &status, &currentValue, &threshold, &startedAt, &resolvedAt, &updatedAt, &ts); err != nil {
 			continue
 		}
-		result = append(result, AlertRecord{RuleName: ruleName, Level: level, Message: message, Timestamp: ts})
+		recordStatus := status.String
+		if recordStatus == "" {
+			recordStatus = "RESOLVED"
+		}
+		result = append(result, AlertRecord{
+			RuleName: ruleName.String, Level: level.String, Message: message.String, Status: recordStatus,
+			CurrentValue: currentValue.Float64, Threshold: threshold.Float64, StartedAt: startedAt.String,
+			ResolvedAt: resolvedAt.String, UpdatedAt: updatedAt.String, Timestamp: ts.String,
+		})
 	}
 	return result
 }
@@ -783,5 +942,4 @@ func handleDatabaseSummary(w http.ResponseWriter, r *http.Request) {
 
 func init() {
 	hostStates = map[string]*HostRuntimeState{}
-	stateAlertMap = map[string]map[string]bool{}
 }
