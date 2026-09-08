@@ -1,63 +1,45 @@
 services:
-
   zf-monitor-back:
     image: ghcr.io/king1039/zf-monitor-back:latest
     container_name: zf-monitor-back
-
     ports:
       - "18080:8080"
-
     environment:
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       REDIS_ADDR: zf-monitor-redis:6379
-
     volumes:
       - /opt/zf-monitor-docker-data/backend:/app/data
-
     networks:
       - zf-network
+    restart: unless-stopped
 
+  zf-monitor-db-controller:
+    image: ghcr.io/king1039/zf-monitor-db-controller:latest
+    container_name: zf-monitor-db-controller
+    volumes:
+      - /etc/zf-monitor/db-controller.yaml:/app/config.yaml:ro
+      - /opt/zf-monitor-docker-data/backend:/app/data
+    networks:
+      - zf-network
     restart: unless-stopped
 
   zf-monitor-redis:
     image: redis:7-alpine
     container_name: zf-monitor-redis
-
     command:
       - redis-server
       - --appendonly
       - "yes"
-
     volumes:
       - /opt/zf-monitor-docker-data/redis:/data
-
     networks:
       - zf-network
-
     restart: unless-stopped
-
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
 
-
-  zf-monitor-db-controller:
-    image: ghcr.io/king1039/zf-monitor-db-controller:latest
-    container_name: zf-monitor-db-controller
-
-    volumes:
-      - /etc/zf-monitor/db-controller.yaml:/app/config.yaml:ro
-      - /opt/zf-monitor-docker-data/backend:/app/data
-
-    networks:
-      - zf-network
-
-    restart: unless-stopped
-
-
 networks:
-
   zf-network:
     external: true
