@@ -6,6 +6,7 @@ on:
       - feature/cicd
       - feature/alert
       - feature/setting
+      - feature/redis
   workflow_dispatch:
 
 permissions:

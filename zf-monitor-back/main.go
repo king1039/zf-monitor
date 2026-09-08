@@ -1,15 +1,18 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -171,11 +174,15 @@ func main() {
 	if err := initDB(db); err != nil {
 		log.Fatal(err)
 	}
+	initRedis()
+	defer closeRedis()
 	startNotificationWorker()
 
 	http.HandleFunc("/api/hosts", handleHosts)
 	http.HandleFunc("/api/report", handleReport)
 	http.HandleFunc("/api/summary", handleSummary)
+	http.HandleFunc("/api/redis/status", handleRedisStatus)
+	http.HandleFunc("/api/redis/host/latest", handleRedisHostLatest)
 	http.HandleFunc("/api/history", handleHistory)
 	http.HandleFunc("/api/processes", handleProcesses)
 	http.HandleFunc("/api/alerts", handleAlerts)
@@ -190,8 +197,28 @@ func main() {
 	http.HandleFunc("/api/database/summary", handleDatabaseSummary)
 	http.Handle("/", http.FileServer(http.Dir("web")))
 
-	log.Println("server listening on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	server := &http.Server{Addr: ":8080"}
+	serverContext, stopServer := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopServer()
+
+	serverErr := make(chan error, 1)
+	go func() {
+		log.Println("server listening on :8080")
+		serverErr <- server.ListenAndServe()
+	}()
+
+	select {
+	case <-serverContext.Done():
+		shutdownContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownContext); err != nil {
+			log.Printf("http server shutdown failed: %v", err)
+		}
+	case err := <-serverErr:
+		if err != nil && err != http.ErrServerClosed {
+			log.Printf("http server failed: %v", err)
+		}
+	}
 }
 
 func initDB(db *sql.DB) error {
@@ -313,12 +340,35 @@ func handleHosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	redisFailed := false
+	if redisClient != nil {
+		hosts, hit, err := getCachedHosts()
+		if err == nil && hit {
+			w.Header().Set("X-Cache", "HIT")
+			writeJSON(w, hosts)
+			return
+		}
+		if err != nil {
+			redisFailed = true
+			log.Printf("redis cache get failed key=%s err=%v", hostsCacheKey(), err)
+		}
+	}
+
 	hosts, err := listHosts()
 	if err != nil {
 		http.Error(w, "failed to read hosts", http.StatusInternalServerError)
 		return
 	}
 
+	cacheStatus := "BYPASS"
+	if redisClient != nil && !redisFailed {
+		if err := cacheHosts(hosts); err != nil {
+			log.Printf("redis cache set failed key=%s err=%v", hostsCacheKey(), err)
+		} else {
+			cacheStatus = "MISS"
+		}
+	}
+	w.Header().Set("X-Cache", cacheStatus)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(hosts)
 }
@@ -461,6 +511,21 @@ func handleReport(w http.ResponseWriter, r *http.Request) {
 	lastSeen := time.Now()
 	if err := saveHostRecord(report.HostID, report.Hostname, lastSeen); err != nil {
 		log.Printf("save host record failed: %v", err)
+		http.Error(w, "failed to store host record", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("received report hostId=%s host=%s cpu=%.1f memory=%.1f", report.HostID, report.Hostname, report.CPU, report.Memory)
+
+	if err := saveMetrics(report); err != nil {
+		log.Printf("save metrics failed: %v", err)
+		http.Error(w, "failed to store metrics", http.StatusInternalServerError)
+		return
+	}
+	if err := evaluateAlerts(report); err != nil {
+		log.Printf("evaluate alerts failed: %v", err)
+		http.Error(w, "failed to evaluate alerts", http.StatusInternalServerError)
+		return
 	}
 
 	stateMu.Lock()
@@ -474,13 +539,8 @@ func handleReport(w http.ResponseWriter, r *http.Request) {
 	hostStates[report.HostID] = stateHost
 	stateMu.Unlock()
 
-	log.Printf("received report hostId=%s host=%s cpu=%.1f memory=%.1f", report.HostID, report.Hostname, report.CPU, report.Memory)
-
-	if err := saveMetrics(report); err != nil {
-		log.Printf("save metrics failed: %v", err)
-	}
-	if err := evaluateAlerts(report); err != nil {
-		log.Printf("evaluate alerts failed: %v", err)
+	if redisClient != nil {
+		updateRedisAfterReport(report, lastSeen)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -511,10 +571,27 @@ func loadHostState(hostID string) (HostRuntimeState, bool) {
 
 func handleSummary(w http.ResponseWriter, r *http.Request) {
 	setNoCache(w)
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	hostID := r.URL.Query().Get("hostId")
 	if hostID == "" {
 		http.Error(w, "hostId is required", http.StatusBadRequest)
 		return
+	}
+	redisFailed := false
+	if redisClient != nil {
+		cached, hit, err := getCachedSummary(hostID)
+		if err == nil && hit {
+			w.Header().Set("X-Cache", "HIT")
+			writeJSON(w, cached)
+			return
+		}
+		if err != nil {
+			redisFailed = true
+			log.Printf("redis cache get failed key=%s err=%v", summaryCacheKey(hostID), err)
+		}
 	}
 
 	state, ok := loadHostState(hostID)
@@ -548,7 +625,16 @@ func handleSummary(w http.ResponseWriter, r *http.Request) {
 	if !state.LastSeen.IsZero() {
 		response.LastSeen = state.LastSeen.Format(time.RFC3339)
 	}
+	cacheStatus := "BYPASS"
+	if redisClient != nil && !redisFailed {
+		if err := cacheSummary(hostID, response); err != nil {
+			log.Printf("redis cache set failed key=%s err=%v", summaryCacheKey(hostID), err)
+		} else {
+			cacheStatus = "MISS"
+		}
+	}
 
+	w.Header().Set("X-Cache", cacheStatus)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
