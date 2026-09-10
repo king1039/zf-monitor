@@ -169,19 +169,22 @@ func main() {
 		log.Fatal(err)
 	}
 	stateDB = db
-	defer db.Close()
 
 	if err := initDB(db); err != nil {
+		_ = db.Close()
 		log.Fatal(err)
 	}
 	initRedis()
-	defer closeRedis()
+	initKafka()
 	startNotificationWorker()
+	consumerContext, stopConsumer := context.WithCancel(context.Background())
+	consumerDone := startKafkaConsumer(consumerContext)
 
 	http.HandleFunc("/api/hosts", handleHosts)
 	http.HandleFunc("/api/report", handleReport)
 	http.HandleFunc("/api/summary", handleSummary)
 	http.HandleFunc("/api/redis/status", handleRedisStatus)
+	http.HandleFunc("/api/kafka/status", handleKafkaStatus)
 	http.HandleFunc("/api/redis/host/latest", handleRedisHostLatest)
 	http.HandleFunc("/api/history", handleHistory)
 	http.HandleFunc("/api/processes", handleProcesses)
@@ -218,6 +221,14 @@ func main() {
 		if err != nil && err != http.ErrServerClosed {
 			log.Printf("http server failed: %v", err)
 		}
+	}
+	stopConsumer()
+	closeKafkaReader()
+	<-consumerDone
+	closeKafka()
+	closeRedis()
+	if err := db.Close(); err != nil {
+		log.Printf("database close failed: %v", err)
 	}
 }
 
@@ -508,43 +519,17 @@ func handleReport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	report.HostID = normalizeHostID(report.HostID, report.Hostname)
-	lastSeen := time.Now()
-	if err := saveHostRecord(report.HostID, report.Hostname, lastSeen); err != nil {
-		log.Printf("save host record failed: %v", err)
-		http.Error(w, "failed to store host record", http.StatusInternalServerError)
+	event := newHostReportEvent(report, time.Now().UTC())
+	publishContext, cancel := context.WithTimeout(r.Context(), kafkaOperationTimeout)
+	defer cancel()
+	if err := publishHostReportEvent(publishContext, event); err != nil {
+		log.Printf("kafka publish failed hostId=%s err=%v", report.HostID, err)
+		http.Error(w, "telemetry service unavailable", http.StatusServiceUnavailable)
 		return
-	}
-
-	log.Printf("received report hostId=%s host=%s cpu=%.1f memory=%.1f", report.HostID, report.Hostname, report.CPU, report.Memory)
-
-	if err := saveMetrics(report); err != nil {
-		log.Printf("save metrics failed: %v", err)
-		http.Error(w, "failed to store metrics", http.StatusInternalServerError)
-		return
-	}
-	if err := evaluateAlerts(report); err != nil {
-		log.Printf("evaluate alerts failed: %v", err)
-		http.Error(w, "failed to evaluate alerts", http.StatusInternalServerError)
-		return
-	}
-
-	stateMu.Lock()
-	stateHost := hostStates[report.HostID]
-	if stateHost == nil {
-		stateHost = &HostRuntimeState{}
-	}
-	stateHost.Hostname = report.Hostname
-	stateHost.LastSeen = lastSeen
-	stateHost.Processes = append([]ProcessInfo(nil), report.Processes...)
-	hostStates[report.HostID] = stateHost
-	stateMu.Unlock()
-
-	if redisClient != nil {
-		updateRedisAfterReport(report, lastSeen)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
 }
 
 func loadHostState(hostID string) (HostRuntimeState, bool) {
@@ -689,12 +674,12 @@ func handleProcesses(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string][]ProcessInfo{"processes": append([]ProcessInfo(nil), state.Processes...)})
 }
 
-func saveMetrics(report Report) error {
+func saveMetrics(report Report, timestamp time.Time) error {
 	if stateDB == nil {
 		return nil
 	}
 
-	timestamp := time.Now().UTC().Format(time.RFC3339)
+	timestampText := timestamp.UTC().Format(time.RFC3339)
 	metrics := []struct {
 		name  string
 		value float64
@@ -708,7 +693,7 @@ func saveMetrics(report Report) error {
 	}
 
 	for _, item := range metrics {
-		if _, err := stateDB.Exec(`INSERT INTO metrics (host_id, timestamp, name, value, unit) VALUES (?, ?, ?, ?, ?)`, report.HostID, timestamp, item.name, item.value, item.unit); err != nil {
+		if _, err := stateDB.Exec(`INSERT INTO metrics (host_id, timestamp, name, value, unit) VALUES (?, ?, ?, ?, ?)`, report.HostID, timestampText, item.name, item.value, item.unit); err != nil {
 			return err
 		}
 	}

@@ -7,6 +7,7 @@ on:
       - feature/alert
       - feature/setting
       - feature/redis
+      - feature/kafka
   workflow_dispatch:
 
 permissions:

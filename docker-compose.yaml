@@ -6,6 +6,9 @@ services:
       - "18080:8080"
     environment:
       REDIS_ADDR: zf-monitor-redis:6379
+      KAFKA_ADDR: kafka:9092
+      KAFKA_TOPIC: stark.metrics.raw
+      KAFKA_CONSUMER_GROUP: stark-monitor-metrics-v1
     volumes:
       - /opt/zf-monitor-docker-data/backend:/app/data
     networks:
@@ -39,6 +42,52 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+
+  kafka:
+    image: apache/kafka:4.3.1
+    container_name: zf-monitor-kafka
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: "1"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - /opt/zf-monitor-docker-data/kafka:/var/lib/kafka/data
+    networks:
+      - zf-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-broker-api-versions.sh", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  kafka-init:
+    image: apache/kafka:4.3.1
+    container_name: zf-monitor-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: >-
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic stark.metrics.raw --partitions 6 --replication-factor 1
+    networks:
+      - zf-network
+    restart: "no"
 
 networks:
   zf-network:
