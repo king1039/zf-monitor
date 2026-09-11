@@ -29,6 +29,8 @@ COPY --from=builder /app/zf-monitor-back .
 
 COPY web ./web
 
+COPY database ./databse
+
 RUN mkdir -p /app/data
 
 EXPOSE 8080
