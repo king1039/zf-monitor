@@ -29,7 +29,7 @@ COPY --from=builder /app/zf-monitor-back .
 
 COPY zf-monitor-back/web ./web
 
-COPY database ./databse
+COPY database ./database
 
 RUN mkdir -p /app/data
 
