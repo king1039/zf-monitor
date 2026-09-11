@@ -8,11 +8,11 @@ WORKDIR /app
 # 使用国内 Go Module Proxy
 ENV GOPROXY=https://goproxy.cn,direct
 
-COPY go.mod go.sum ./
+COPY zf-monitor-back/go.mod zf-monitor-back/go.sum ./
 
 RUN go mod download
 
-COPY . .
+COPY zf-monitor-back .
 
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -o zf-monitor-back .
@@ -27,7 +27,7 @@ WORKDIR /app
 
 COPY --from=builder /app/zf-monitor-back .
 
-COPY web ./web
+COPY zf-monitor-back/web ./web
 
 COPY database ./databse
 
