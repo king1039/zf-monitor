@@ -48,7 +48,10 @@ func getFiringAlert(hostID, ruleName string) (AlertRecord, bool) {
 	if stateDB == nil {
 		return AlertRecord{}, false
 	}
-	row := stateDB.QueryRow(`SELECT rule_name, level, message, status, current_value, threshold, started_at, resolved_at, updated_at, timestamp FROM alerts WHERE host_id = ? AND rule_name = ? AND status = 'FIRING' ORDER BY id DESC LIMIT 1`, hostID, ruleName)
+	row := stateDB.QueryRow(bindSQL(dbSQL(
+		`SELECT rule_name, level, message, status, current_value, threshold, started_at, resolved_at, updated_at, timestamp FROM alerts WHERE host_id = ? AND rule_name = ? AND status = 'FIRING' ORDER BY id DESC LIMIT 1`,
+		`SELECT rule_name, level, message, status, current_value, threshold, started_at, resolved_at, updated_at, timestamp FROM alerts WHERE host_id = $1 AND rule_name = $2 AND status = 'FIRING' ORDER BY id DESC LIMIT 1`,
+	)), hostID, ruleName)
 	var rule, level, message, status, startedAt, resolvedAt, updatedAt, timestamp sql.NullString
 	var currentValue, threshold sql.NullFloat64
 	if err := row.Scan(&rule, &level, &message, &status, &currentValue, &threshold, &startedAt, &resolvedAt, &updatedAt, &timestamp); err != nil {

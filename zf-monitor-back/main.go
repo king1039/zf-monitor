@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 )
 
@@ -153,32 +154,22 @@ type DatabaseSummaryResponse struct {
 }
 
 var (
-	stateMu    sync.RWMutex
-	hostStates = map[string]*HostRuntimeState{}
-	stateDB    *sql.DB
+	stateMu        sync.RWMutex
+	hostStates     = map[string]*HostRuntimeState{}
+	stateDB        *sql.DB
+	databaseDriver = "sqlite"
 )
 
 func main() {
-	if err := os.MkdirAll("data", 0755); err != nil {
-		log.Fatal(err)
-	}
-
-	dbPath := filepath.Join("data", "monitor.db")
-	db, err := sql.Open("sqlite", dbPath)
+	db, driverName, err := initDatabase()
 	if err != nil {
 		log.Fatal(err)
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	if _, err := db.Exec(`PRAGMA journal_mode=WAL;`); err != nil {
-		log.Fatal(err)
-	}
-	if _, err := db.Exec(`PRAGMA busy_timeout=5000;`); err != nil {
-		log.Fatal(err)
-	}
+	log.Printf("database connected driver=%s", driverName)
+	databaseDriver = driverName
 	stateDB = db
 
-	if err := initDB(db); err != nil {
+	if err := initDB(db, driverName); err != nil {
 		_ = db.Close()
 		log.Fatal(err)
 	}
@@ -240,7 +231,53 @@ func main() {
 	}
 }
 
-func initDB(db *sql.DB) error {
+func initDatabase() (*sql.DB, string, error) {
+	if databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL")); databaseURL != "" {
+		db, err := sql.Open("pgx", databaseURL)
+		if err != nil {
+			return nil, "", err
+		}
+		return db, "postgres", nil
+	}
+
+	if err := os.MkdirAll("data", 0755); err != nil {
+		return nil, "", err
+	}
+
+	dbPath := filepath.Join("data", "monitor.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, "", err
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL;`); err != nil {
+		_ = db.Close()
+		return nil, "", err
+	}
+	if _, err := db.Exec(`PRAGMA busy_timeout=5000;`); err != nil {
+		_ = db.Close()
+		return nil, "", err
+	}
+	return db, "sqlite", nil
+}
+
+func initDB(db *sql.DB, driverNames ...string) error {
+	driverName := "sqlite"
+	if len(driverNames) > 0 {
+		driverName = driverNames[0]
+	}
+	if driverName == "postgres" {
+		schema, err := os.ReadFile(filepath.Join("database", "postgres", "init.sql"))
+		if err != nil {
+			return err
+		}
+		if _, err = db.Exec(string(schema)); err != nil {
+			return err
+		}
+		return initSettings(db)
+	}
+
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS hosts (host_id TEXT PRIMARY KEY, hostname TEXT, last_seen TEXT);`,
 		`CREATE TABLE IF NOT EXISTS metrics (id INTEGER PRIMARY KEY AUTOINCREMENT, host_id TEXT NOT NULL, timestamp TEXT, name TEXT, value REAL, unit TEXT);`,
@@ -308,11 +345,32 @@ func ensureColumn(db *sql.DB, tableName, columnName string) error {
 }
 
 func ensureColumnType(db *sql.DB, tableName, columnName, columnType string) error {
-	rows, err := db.Query("PRAGMA table_info(" + tableName + ")")
+	query := "PRAGMA table_info(" + tableName + ")"
+	if databaseDriver == "postgres" {
+		query = `SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2`
+	}
+	var rows *sql.Rows
+	var err error
+	if databaseDriver == "postgres" {
+		rows, err = db.Query(query, tableName, columnName)
+	} else {
+		rows, err = db.Query(query)
+	}
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
+
+	if databaseDriver == "postgres" {
+		if rows.Next() {
+			return nil
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		_, err = db.Exec("ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " " + columnType)
+		return err
+	}
 
 	for rows.Next() {
 		var cid int
@@ -326,6 +384,34 @@ func ensureColumnType(db *sql.DB, tableName, columnName, columnType string) erro
 	}
 	_, err = db.Exec("ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " " + columnType)
 	return err
+}
+
+func dbSQL(sqliteSQL, postgresSQL string) string {
+	if databaseDriver == "postgres" {
+		return postgresSQL
+	}
+	return sqliteSQL
+}
+
+func bindSQL(query string) string {
+	if databaseDriver != "postgres" {
+		return query
+	}
+	var builder strings.Builder
+	parameter := 1
+	for {
+		index := strings.IndexByte(query, '?')
+		if index < 0 {
+			builder.WriteString(query)
+			break
+		}
+		builder.WriteString(query[:index])
+		builder.WriteString("$")
+		builder.WriteString(strconv.Itoa(parameter))
+		parameter++
+		query = query[index+1:]
+	}
+	return builder.String()
 }
 
 func setNoCache(w http.ResponseWriter) {
@@ -348,7 +434,10 @@ func saveHostRecord(hostID, hostname string, lastSeen time.Time) error {
 	if stateDB == nil {
 		return nil
 	}
-	_, err := stateDB.Exec(`INSERT INTO hosts (host_id, hostname, last_seen) VALUES (?, ?, ?) ON CONFLICT(host_id) DO UPDATE SET hostname = excluded.hostname, last_seen = excluded.last_seen`, hostID, hostname, lastSeen.UTC().Format(time.RFC3339))
+	_, err := stateDB.Exec(bindSQL(dbSQL(
+		`INSERT INTO hosts (host_id, hostname, last_seen) VALUES (?, ?, ?) ON CONFLICT(host_id) DO UPDATE SET hostname = excluded.hostname, last_seen = excluded.last_seen`,
+		`INSERT INTO hosts (host_id, hostname, last_seen) VALUES ($1, $2, $3) ON CONFLICT(host_id) DO UPDATE SET hostname = excluded.hostname, last_seen = excluded.last_seen`,
+	)), hostID, hostname, lastSeen.UTC().Format(time.RFC3339))
 	return err
 }
 
@@ -448,7 +537,7 @@ func handleAlerts(w http.ResponseWriter, r *http.Request) {
 		alerts.updated_at DESC, alerts.id DESC LIMIT ?`
 	args = append(args, limit)
 
-	rows, err := stateDB.Query(queryText, args...)
+	rows, err := stateDB.Query(bindSQL(queryText), args...)
 	if err != nil {
 		http.Error(w, "failed to read alerts", http.StatusInternalServerError)
 		return
@@ -492,7 +581,10 @@ func listHosts() ([]HostListItem, error) {
 	if stateDB == nil {
 		return nil, nil
 	}
-	rows, err := stateDB.Query(`SELECT host_id, hostname, last_seen FROM hosts ORDER BY hostname ASC`)
+	rows, err := stateDB.Query(dbSQL(
+		`SELECT host_id, hostname, last_seen FROM hosts ORDER BY hostname ASC`,
+		`SELECT host_id, hostname, last_seen FROM hosts ORDER BY hostname ASC`,
+	))
 	if err != nil {
 		return nil, err
 	}
@@ -550,7 +642,10 @@ func loadHostState(hostID string) (HostRuntimeState, bool) {
 	if stateDB == nil {
 		return HostRuntimeState{}, false
 	}
-	row := stateDB.QueryRow(`SELECT hostname, last_seen FROM hosts WHERE host_id = ?`, hostID)
+	row := stateDB.QueryRow(bindSQL(dbSQL(
+		`SELECT hostname, last_seen FROM hosts WHERE host_id = ?`,
+		`SELECT hostname, last_seen FROM hosts WHERE host_id = $1`,
+	)), hostID)
 	var hostname, lastSeen string
 	if err := row.Scan(&hostname, &lastSeen); err != nil {
 		return HostRuntimeState{}, false
@@ -701,7 +796,10 @@ func saveMetrics(report Report, timestamp time.Time) error {
 	}
 
 	for _, item := range metrics {
-		if _, err := stateDB.Exec(`INSERT INTO metrics (host_id, timestamp, name, value, unit) VALUES (?, ?, ?, ?, ?)`, report.HostID, timestampText, item.name, item.value, item.unit); err != nil {
+		if _, err := stateDB.Exec(bindSQL(dbSQL(
+			`INSERT INTO metrics (host_id, timestamp, name, value, unit) VALUES (?, ?, ?, ?, ?)`,
+			`INSERT INTO metrics (host_id, timestamp, name, value, unit) VALUES ($1, $2, $3, $4, $5)`,
+		)), report.HostID, timestampText, item.name, item.value, item.unit); err != nil {
 			return err
 		}
 	}
@@ -738,7 +836,10 @@ func evaluateAlerts(report Report) error {
 			if alert, exists := getFiringAlert(report.HostID, rule.key); exists {
 				existing = alert
 			}
-			result, updateErr := stateDB.Exec(`UPDATE alerts SET status = 'RESOLVED', message = 'Rule disabled', resolved_at = ?, updated_at = ?, current_value = ? WHERE host_id = ? AND rule_name = ? AND status = 'FIRING'`, now, now, rule.currentValue, report.HostID, rule.key)
+			result, updateErr := stateDB.Exec(bindSQL(dbSQL(
+				`UPDATE alerts SET status = 'RESOLVED', message = 'Rule disabled', resolved_at = ?, updated_at = ?, current_value = ? WHERE host_id = ? AND rule_name = ? AND status = 'FIRING'`,
+				`UPDATE alerts SET status = 'RESOLVED', message = 'Rule disabled', resolved_at = $1, updated_at = $2, current_value = $3 WHERE host_id = $4 AND rule_name = $5 AND status = 'FIRING'`,
+			)), now, now, rule.currentValue, report.HostID, rule.key)
 			if updateErr != nil {
 				return updateErr
 			}
@@ -755,15 +856,22 @@ func evaluateAlerts(report Report) error {
 			continue
 		}
 		if rule.currentValue >= rule.config.Threshold {
-			result, err := stateDB.Exec(`UPDATE alerts SET current_value = ?, threshold = ?, level = ?, message = ?, updated_at = ? WHERE host_id = ? AND rule_name = ? AND status = 'FIRING'`, rule.currentValue, rule.config.Threshold, strings.ToLower(rule.config.Level), rule.message, now, report.HostID, rule.key)
+			result, err := stateDB.Exec(bindSQL(dbSQL(
+				`UPDATE alerts SET current_value = ?, threshold = ?, level = ?, message = ?, updated_at = ? WHERE host_id = ? AND rule_name = ? AND status = 'FIRING'`,
+				`UPDATE alerts SET current_value = $1, threshold = $2, level = $3, message = $4, updated_at = $5 WHERE host_id = $6 AND rule_name = $7 AND status = 'FIRING'`,
+			)), rule.currentValue, rule.config.Threshold, strings.ToLower(rule.config.Level), rule.message, now, report.HostID, rule.key)
 			if err != nil {
 				return err
 			}
 			if affected, err := result.RowsAffected(); err != nil {
 				return err
 			} else if affected == 0 {
-				insertResult, insertErr := stateDB.Exec(`INSERT OR IGNORE INTO alerts (host_id, rule_name, level, message, status, current_value, threshold, started_at, updated_at, timestamp)
-					VALUES (?, ?, ?, ?, 'FIRING', ?, ?, ?, ?, ?)`,
+				insertResult, insertErr := stateDB.Exec(bindSQL(dbSQL(
+					`INSERT OR IGNORE INTO alerts (host_id, rule_name, level, message, status, current_value, threshold, started_at, updated_at, timestamp)
+						VALUES (?, ?, ?, ?, 'FIRING', ?, ?, ?, ?, ?)`,
+					`INSERT INTO alerts (host_id, rule_name, level, message, status, current_value, threshold, started_at, updated_at, timestamp)
+						VALUES ($1, $2, $3, $4, 'FIRING', $5, $6, $7, $8, $9) ON CONFLICT DO NOTHING`,
+				)),
 					report.HostID, rule.key, strings.ToLower(rule.config.Level), rule.message, rule.currentValue, rule.config.Threshold, now, now, now)
 				if insertErr != nil {
 					return insertErr
@@ -777,14 +885,20 @@ func evaluateAlerts(report Report) error {
 					enqueueNotification(notificationEvent{Alert: alert, Hostname: hostname})
 				}
 			}
-			if _, err := stateDB.Exec(`UPDATE alerts SET current_value = ?, updated_at = ? WHERE host_id = ? AND rule_name = ? AND status = 'FIRING'`, rule.currentValue, now, report.HostID, rule.key); err != nil {
+			if _, err := stateDB.Exec(bindSQL(dbSQL(
+				`UPDATE alerts SET current_value = ?, updated_at = ? WHERE host_id = ? AND rule_name = ? AND status = 'FIRING'`,
+				`UPDATE alerts SET current_value = $1, updated_at = $2 WHERE host_id = $3 AND rule_name = $4 AND status = 'FIRING'`,
+			)), rule.currentValue, now, report.HostID, rule.key); err != nil {
 				return err
 			}
 			continue
 		}
 
 		existing, exists := getFiringAlert(report.HostID, rule.key)
-		result, err := stateDB.Exec(`UPDATE alerts SET status = 'RESOLVED', resolved_at = ?, updated_at = ?, current_value = ? WHERE host_id = ? AND rule_name = ? AND status = 'FIRING'`, now, now, rule.currentValue, report.HostID, rule.key)
+		result, err := stateDB.Exec(bindSQL(dbSQL(
+			`UPDATE alerts SET status = 'RESOLVED', resolved_at = ?, updated_at = ?, current_value = ? WHERE host_id = ? AND rule_name = ? AND status = 'FIRING'`,
+			`UPDATE alerts SET status = 'RESOLVED', resolved_at = $1, updated_at = $2, current_value = $3 WHERE host_id = $4 AND rule_name = $5 AND status = 'FIRING'`,
+		)), now, now, rule.currentValue, report.HostID, rule.key)
 		if err != nil {
 			return err
 		}
@@ -808,7 +922,10 @@ func getRecentAlerts(hostID string) []AlertRecord {
 	if stateDB == nil {
 		return nil
 	}
-	rows, err := stateDB.Query(`SELECT rule_name, level, message, status, current_value, threshold, started_at, resolved_at, updated_at, timestamp FROM alerts WHERE host_id = ? ORDER BY id DESC LIMIT 20`, hostID)
+	rows, err := stateDB.Query(bindSQL(dbSQL(
+		`SELECT rule_name, level, message, status, current_value, threshold, started_at, resolved_at, updated_at, timestamp FROM alerts WHERE host_id = ? ORDER BY id DESC LIMIT 20`,
+		`SELECT rule_name, level, message, status, current_value, threshold, started_at, resolved_at, updated_at, timestamp FROM alerts WHERE host_id = $1 ORDER BY id DESC LIMIT 20`,
+	)), hostID)
 	if err != nil {
 		return nil
 	}
@@ -838,7 +955,10 @@ func queryHistory(hostID, metricName string, start time.Time) ([]MetricPoint, er
 	if stateDB == nil {
 		return nil, nil
 	}
-	rows, err := stateDB.Query(`SELECT timestamp, value FROM metrics WHERE host_id = ? AND name = ? AND datetime(timestamp) >= datetime(?) ORDER BY timestamp ASC`, hostID, metricName, start.Format(time.RFC3339))
+	rows, err := stateDB.Query(bindSQL(dbSQL(
+		`SELECT timestamp, value FROM metrics WHERE host_id = ? AND name = ? AND datetime(timestamp) >= datetime(?) ORDER BY timestamp ASC`,
+		`SELECT timestamp, value FROM metrics WHERE host_id = $1 AND name = $2 AND timestamp >= $3 ORDER BY timestamp ASC`,
+	)), hostID, metricName, start.Format(time.RFC3339))
 	if err != nil {
 		return nil, err
 	}
@@ -863,7 +983,10 @@ func getLatestMetricsForHost(hostID string) (map[string]float64, error) {
 	}
 
 	for _, name := range []string{"cpu", "memory", "disk", "net_up", "net_down"} {
-		row := stateDB.QueryRow(`SELECT value FROM metrics WHERE host_id = ? AND name = ? ORDER BY id DESC LIMIT 1`, hostID, name)
+		row := stateDB.QueryRow(bindSQL(dbSQL(
+			`SELECT value FROM metrics WHERE host_id = ? AND name = ? ORDER BY id DESC LIMIT 1`,
+			`SELECT value FROM metrics WHERE host_id = $1 AND name = $2 ORDER BY id DESC LIMIT 1`,
+		)), hostID, name)
 		var value float64
 		if err := row.Scan(&value); err != nil {
 			continue
@@ -932,7 +1055,10 @@ func saveDatabaseReport(report DatabaseReport) error {
 		status = "offline"
 	}
 
-	_, err := stateDB.Exec(`INSERT INTO database_instances (instance_id, name, db_type, host, port, server_name, version, product_level, edition, status, last_seen, last_error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(instance_id) DO UPDATE SET name = excluded.name, db_type = excluded.db_type, host = excluded.host, port = excluded.port, server_name = CASE WHEN excluded.server_name <> '' THEN excluded.server_name ELSE database_instances.server_name END, version = CASE WHEN excluded.version <> '' THEN excluded.version ELSE database_instances.version END, product_level = CASE WHEN excluded.product_level <> '' THEN excluded.product_level ELSE database_instances.product_level END, edition = CASE WHEN excluded.edition <> '' THEN excluded.edition ELSE database_instances.edition END, status = excluded.status, last_seen = excluded.last_seen, last_error = excluded.last_error`,
+	_, err := stateDB.Exec(bindSQL(dbSQL(
+		`INSERT INTO database_instances (instance_id, name, db_type, host, port, server_name, version, product_level, edition, status, last_seen, last_error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(instance_id) DO UPDATE SET name = excluded.name, db_type = excluded.db_type, host = excluded.host, port = excluded.port, server_name = CASE WHEN excluded.server_name <> '' THEN excluded.server_name ELSE database_instances.server_name END, version = CASE WHEN excluded.version <> '' THEN excluded.version ELSE database_instances.version END, product_level = CASE WHEN excluded.product_level <> '' THEN excluded.product_level ELSE database_instances.product_level END, edition = CASE WHEN excluded.edition <> '' THEN excluded.edition ELSE database_instances.edition END, status = excluded.status, last_seen = excluded.last_seen, last_error = excluded.last_error`,
+		`INSERT INTO database_instances (instance_id, name, db_type, host, port, server_name, version, product_level, edition, status, last_seen, last_error) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) ON CONFLICT(instance_id) DO UPDATE SET name = excluded.name, db_type = excluded.db_type, host = excluded.host, port = excluded.port, server_name = CASE WHEN excluded.server_name <> '' THEN excluded.server_name ELSE database_instances.server_name END, version = CASE WHEN excluded.version <> '' THEN excluded.version ELSE database_instances.version END, product_level = CASE WHEN excluded.product_level <> '' THEN excluded.product_level ELSE database_instances.product_level END, edition = CASE WHEN excluded.edition <> '' THEN excluded.edition ELSE database_instances.edition END, status = excluded.status, last_seen = excluded.last_seen, last_error = excluded.last_error`,
+	)),
 		report.InstanceID,
 		report.Name,
 		report.Type,
@@ -950,7 +1076,10 @@ func saveDatabaseReport(report DatabaseReport) error {
 		return err
 	}
 
-	_, err = stateDB.Exec(`INSERT INTO database_metrics (instance_id, timestamp, uptime_seconds, connections, max_connections, active_sessions, running_requests, database_count, total_database_size_mb) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err = stateDB.Exec(bindSQL(dbSQL(
+		`INSERT INTO database_metrics (instance_id, timestamp, uptime_seconds, connections, max_connections, active_sessions, running_requests, database_count, total_database_size_mb) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO database_metrics (instance_id, timestamp, uptime_seconds, connections, max_connections, active_sessions, running_requests, database_count, total_database_size_mb) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+	)),
 		report.InstanceID,
 		lastSeen,
 		report.UptimeSeconds,
@@ -1031,7 +1160,10 @@ func handleDatabaseSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	row := stateDB.QueryRow(`SELECT instance_id, name, db_type, host, port, server_name, version, product_level, edition, status, last_seen FROM database_instances WHERE instance_id = ?`, instanceID)
+	row := stateDB.QueryRow(bindSQL(dbSQL(
+		`SELECT instance_id, name, db_type, host, port, server_name, version, product_level, edition, status, last_seen FROM database_instances WHERE instance_id = ?`,
+		`SELECT instance_id, name, db_type, host, port, server_name, version, product_level, edition, status, last_seen FROM database_instances WHERE instance_id = $1`,
+	)), instanceID)
 
 	var (
 		instanceIDValue, name, dbType, host, serverName, version, productLevel, edition, status, lastSeen string
@@ -1042,7 +1174,10 @@ func handleDatabaseSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	metricRow := stateDB.QueryRow(`SELECT uptime_seconds, connections, max_connections, active_sessions, running_requests, database_count, total_database_size_mb FROM database_metrics WHERE instance_id = ? ORDER BY id DESC LIMIT 1`, instanceID)
+	metricRow := stateDB.QueryRow(bindSQL(dbSQL(
+		`SELECT uptime_seconds, connections, max_connections, active_sessions, running_requests, database_count, total_database_size_mb FROM database_metrics WHERE instance_id = ? ORDER BY id DESC LIMIT 1`,
+		`SELECT uptime_seconds, connections, max_connections, active_sessions, running_requests, database_count, total_database_size_mb FROM database_metrics WHERE instance_id = $1 ORDER BY id DESC LIMIT 1`,
+	)), instanceID)
 	var uptimeSeconds, connections, maxConnections, activeSessions, runningRequests, databaseCount, totalDatabaseSizeMB float64
 	if err := metricRow.Scan(&uptimeSeconds, &connections, &maxConnections, &activeSessions, &runningRequests, &databaseCount, &totalDatabaseSizeMB); err != nil {
 		uptimeSeconds, connections, maxConnections, activeSessions, runningRequests, databaseCount, totalDatabaseSizeMB = 0, 0, 0, 0, 0, 0, 0

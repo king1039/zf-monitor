@@ -87,12 +87,18 @@ func initSettings(db *sql.DB) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	for key, value := range defaultSettings {
-		if _, err := db.Exec(`INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)`, key, value, now); err != nil {
+		if _, err := db.Exec(bindSQL(dbSQL(
+			`INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)`,
+			`INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+		)), key, value, now); err != nil {
 			return err
 		}
 	}
 	legacyPlatformName := strings.Join([]string{"ZF", "Monitor"}, " ")
-	if _, err := db.Exec(`UPDATE settings SET value = 'Stark monitor', updated_at = ? WHERE key = 'platform.name' AND value = ?`, now, legacyPlatformName); err != nil {
+	if _, err := db.Exec(bindSQL(dbSQL(
+		`UPDATE settings SET value = 'Stark monitor', updated_at = ? WHERE key = 'platform.name' AND value = ?`,
+		`UPDATE settings SET value = 'Stark monitor', updated_at = $1 WHERE key = 'platform.name' AND value = $2`,
+	)), now, legacyPlatformName); err != nil {
 		return err
 	}
 	return nil
@@ -103,7 +109,10 @@ func getSetting(key string) (string, error) {
 		return "", fmt.Errorf("database unavailable")
 	}
 	var value string
-	err := stateDB.QueryRow(`SELECT value FROM settings WHERE key = ?`, key).Scan(&value)
+	err := stateDB.QueryRow(bindSQL(dbSQL(
+		`SELECT value FROM settings WHERE key = ?`,
+		`SELECT value FROM settings WHERE key = $1`,
+	)), key).Scan(&value)
 	return value, err
 }
 
@@ -194,7 +203,10 @@ func validateRule(rule AlertRuleConfig) error {
 }
 
 func saveSetting(key, value string) error {
-	_, err := stateDB.Exec(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, key, value, time.Now().UTC().Format(time.RFC3339))
+	_, err := stateDB.Exec(bindSQL(dbSQL(
+		`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+		`INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, $3) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+	)), key, value, time.Now().UTC().Format(time.RFC3339))
 	return err
 }
 
@@ -205,7 +217,10 @@ func saveSettings(values map[string]string) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	for key, value := range values {
-		if _, err := tx.Exec(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, key, value, now); err != nil {
+		if _, err := tx.Exec(bindSQL(dbSQL(
+			`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+			`INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, $3) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+		)), key, value, now); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
@@ -369,10 +384,25 @@ func handleSystemSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var pageCount, pageSize int64
-	if stateDB == nil || stateDB.QueryRow(`PRAGMA page_count`).Scan(&pageCount) != nil || stateDB.QueryRow(`PRAGMA page_size`).Scan(&pageSize) != nil {
+	if stateDB == nil {
 		http.Error(w, "failed to read system status", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]interface{}{"backendStatus": "healthy", "database": "SQLite", "databaseSizeBytes": pageCount * pageSize, "version": "dev", "uptimeSeconds": int64(time.Since(backendStartTime).Seconds())})
+	var databaseSizeBytes int64
+	databaseName := "SQLite"
+	if databaseDriver == "postgres" {
+		databaseName = "PostgreSQL"
+		if err := stateDB.QueryRow(`SELECT pg_database_size(current_database())`).Scan(&databaseSizeBytes); err != nil {
+			http.Error(w, "failed to read system status", http.StatusInternalServerError)
+			return
+		}
+	} else {
+		var pageCount, pageSize int64
+		if stateDB.QueryRow(`PRAGMA page_count`).Scan(&pageCount) != nil || stateDB.QueryRow(`PRAGMA page_size`).Scan(&pageSize) != nil {
+			http.Error(w, "failed to read system status", http.StatusInternalServerError)
+			return
+		}
+		databaseSizeBytes = pageCount * pageSize
+	}
+	writeJSON(w, map[string]interface{}{"backendStatus": "healthy", "database": databaseName, "databaseSizeBytes": databaseSizeBytes, "version": "dev", "uptimeSeconds": int64(time.Since(backendStartTime).Seconds())})
 }
